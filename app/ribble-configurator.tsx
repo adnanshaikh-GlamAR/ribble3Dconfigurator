@@ -1,16 +1,30 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 import { DRACOLoader } from "three/examples/jsm/loaders/DRACOLoader.js";
+import { EXRLoader } from "three/examples/jsm/loaders/EXRLoader.js";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { RGBELoader } from "three/examples/jsm/loaders/RGBELoader.js";
 
 type StepId = "graphic" | "size" | "components" | "summary" | "studio";
 type StageId = "build" | "style" | "review" | "studio";
-type ComponentKey = "groupset" | "crankset" | "cassette" | "wheel" | "cockpit" | "saddle";
+type IntroPhase = "loading" | "cinematic" | "ready";
+type ComponentKey =
+  | "groupset"
+  | "crankset"
+  | "cassette"
+  | "wheel"
+  | "cockpit"
+  | "pedals"
+  | "storage"
+  | "seatAdjustment"
+  | "saddle";
+type ComponentIconKey = "frame" | "wheel" | "groupset" | "cockpit" | "pedals" | "saddle" | "storage";
 type ToneMappingKey = "none" | "linear" | "reinhard" | "cineon" | "aces" | "agx" | "neutral";
+type HdriAssetKind = "exr" | "hdr" | "image";
 
 type PaintOption = {
   id: string;
@@ -20,6 +34,13 @@ type PaintOption = {
   accent: string;
   decal: string;
   priceDelta: number;
+};
+
+const stageTabOffsets: Record<StageId, string> = {
+  build: "0%",
+  style: "100%",
+  review: "200%",
+  studio: "300%",
 };
 
 type ComponentOption = {
@@ -67,16 +88,72 @@ type ViewerSettings = {
   pixelRatio: number;
   floorGlow: number;
   backdropGlow: number;
+  hdriIntensity: number;
+  hdriRotation: number;
+  hdriScale: number;
 };
 
 type StudioSurfaces = {
   backdropMaterial: THREE.MeshBasicMaterial;
+  contactAo: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>;
   contactAoMaterial: THREE.MeshBasicMaterial;
+  floor: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshStandardMaterial>;
+  floorGlow: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>;
   floorGlowMaterial: THREE.MeshBasicMaterial;
   floorMaterial: THREE.MeshStandardMaterial;
   group: THREE.Group;
+  stageRing: THREE.Mesh<THREE.RingGeometry, THREE.MeshBasicMaterial>;
   stageRingMaterial: THREE.MeshBasicMaterial;
   stageRingHighlight: THREE.Mesh<THREE.RingGeometry, THREE.MeshBasicMaterial>;
+};
+
+type BodyFramePaintMaterial = {
+  defaultMap: THREE.Texture | null;
+  material: THREE.MeshStandardMaterial;
+};
+
+type HdriAsset = {
+  kind: HdriAssetKind;
+  name: string;
+  url: string;
+};
+
+type HdriPreset = HdriAsset & {
+  id: string;
+  label: string;
+  settings: Pick<ViewerSettings, "hdriIntensity" | "hdriRotation" | "hdriScale">;
+  swatch: string;
+};
+
+type ViewerHotspot = {
+  anchor: [number, number, number];
+  description?: string;
+  id: string;
+  label: string;
+};
+
+type HdriDomeMaterial = THREE.ShaderMaterial & {
+  uniforms: {
+    hdriIntensity: { value: number };
+    hdriMap: { value: THREE.Texture | null };
+    hdriRotation: { value: number };
+    hdriScale: { value: number };
+  };
+};
+
+type ModelAssetId =
+  | "baseFrame"
+  | "duraAce105Di2"
+  | "keoClassic3"
+  | "vittoriaRubino32Mm"
+  | "mavicCosmicSl45"
+  | "zipp303SwCarbon";
+
+type ModelAsset = {
+  id: ModelAssetId;
+  path: string;
+  preload?: boolean;
+  sourceGroundY?: number;
 };
 
 type NumericViewerSettingKey = {
@@ -85,49 +162,31 @@ type NumericViewerSettingKey = {
 
 const paintOptions: PaintOption[] = [
   {
-    id: "racing-red",
-    name: "Racing Red",
-    finish: "Gloss carbon / red gloss",
-    frame: "#1c1f1d",
-    accent: "#e63737",
-    decal: "#f8f4ed",
+    id: "iridescent-white-metallic",
+    name: "Iridescent White Metallic",
+    finish: "Iridescent white metallic",
+    frame: "#f1eee6",
+    accent: "#d9e7f4",
+    decal: "#9d998f",
     priceDelta: 0,
   },
   {
-    id: "electric-teal",
-    name: "Electric Teal",
-    finish: "Satin black / teal pearl",
-    frame: "#111716",
-    accent: "#20d4be",
-    decal: "#f2efe7",
-    priceDelta: 180,
+    id: "damson-metallic",
+    name: "Damson Metallic",
+    finish: "Damson metallic",
+    frame: "#3a1426",
+    accent: "#7b3048",
+    decal: "#f0e8df",
+    priceDelta: 0,
   },
   {
-    id: "champagne",
-    name: "Champagne Fade",
-    finish: "Warm silver / black fade",
-    frame: "#c5bba5",
-    accent: "#111111",
-    decal: "#f4efe2",
-    priceDelta: 260,
-  },
-  {
-    id: "lime-team",
-    name: "Lime Team",
-    finish: "Graphite / lime race stripe",
-    frame: "#161818",
-    accent: "#b5f336",
-    decal: "#f7f7f0",
-    priceDelta: 120,
-  },
-  {
-    id: "white-ink",
-    name: "White Ink",
-    finish: "Pearl white / black logo",
-    frame: "#f0eee7",
-    accent: "#111111",
-    decal: "#111111",
-    priceDelta: 90,
+    id: "slate-grey-metallic",
+    name: "Slate Grey Metallic",
+    finish: "Slate grey metallic",
+    frame: "#555d5f",
+    accent: "#22272a",
+    decal: "#f3efe6",
+    priceDelta: 0,
   },
 ];
 
@@ -143,6 +202,57 @@ const frameSizeMorphValues: Record<string, number> = {
   S: 0,
 };
 
+const handlebarSizeMorphValues: Record<string, number> = {
+  "handlebar-38-80": 0,
+  "handlebar-42-110": 1,
+  "handlebar-42-120": 0.5,
+};
+
+const seatAdjustmentMorphValues: Record<string, number> = {
+  "seat-high": 1,
+  "seat-low": 0,
+  "seat-med": 0.5,
+};
+
+const viewerHotspots: ViewerHotspot[] = [
+  { anchor: [0.5, 0.58, 0.58], id: "body-frame", label: "Body Frame" },
+  {
+    anchor: [0.82, 0.8, 0.62],
+    description:
+      "Crafted from high-grade carbon, the Ribble integrated bar and stem pairs aerodynamic efficiency with a clean, refined aesthetic.",
+    id: "handle",
+    label: "Handle",
+  },
+  {
+    anchor: [0.82, 0.26, 0.6],
+    description:
+      "Carbon wheels deliver real-world speed, control and versatility across smooth roads and rougher surfaces alike.",
+    id: "wheels",
+    label: "Wheels",
+  },
+  {
+    anchor: [0.22, 0.93, 0.58],
+    description:
+      "A newly designed proprietary carbon aero seatpost introduces controlled vertical movement to absorb road vibration and reduce fatigue over long rides.",
+    id: "saddle",
+    label: "Saddle",
+  },
+  {
+    anchor: [0.43, 0.25, 0.66],
+    description:
+      "The pinnacle of Shimano road technology, delivers lightning-fast wireless shifting that redefines what electronic performance feels like at every pace.",
+    id: "groupset",
+    label: "Groupset",
+  },
+  {
+    anchor: [0.55, 0.42, 0.64],
+    description:
+      "ULTRA-ROAD features a dedicated internal downtube storage compartment, built to keep your essentials such as spares, nutrition, tools accessible mid-ride without saddlebags.",
+    id: "bottle-cage",
+    label: "Bottle Cage",
+  },
+];
+
 const defaultViewerSettings: ViewerSettings = {
   ambientIntensity: 0,
   aoIntensity: 0,
@@ -155,6 +265,9 @@ const defaultViewerSettings: ViewerSettings = {
   exposure: 0.61,
   fillIntensity: 1.9,
   floorGlow: 0.75,
+  hdriIntensity: 1.1,
+  hdriRotation: 0,
+  hdriScale: 0.5,
   keyIntensity: 1.55,
   modelAoIntensity: 0.89,
   pixelRatio: 3,
@@ -196,23 +309,16 @@ const componentGroups: ComponentGroup[] = [
     options: [
       {
         id: "shimano-105-di2",
-        name: "Shimano 105 Di2",
+        name: "Dura-Ace 105 Di2",
         subtitle: "Electronic 12 speed",
         priceDelta: 0,
         visual: { metal: "#b9bec4" },
       },
       {
-        id: "ultegra-di2",
-        name: "Shimano Ultegra Di2",
-        subtitle: "Electronic 12 speed",
-        priceDelta: 520,
-        visual: { metal: "#d5d8dc" },
-      },
-      {
         id: "sram-force-axs",
-        name: "SRAM Force AXS",
+        name: "SRAM RED AXS E1",
         subtitle: "Wireless 12 speed",
-        priceDelta: 720,
+        priceDelta: 0,
         visual: { metal: "#1f2428" },
       },
     ],
@@ -268,50 +374,120 @@ const componentGroups: ComponentGroup[] = [
   },
   {
     key: "wheel",
-    label: "Wheel",
+    label: "Wheels",
     focus: "front",
     options: [
       {
         id: "level-db40",
-        name: "LEVEL DB40 Sport",
-        subtitle: "Carbon 40 mm",
+        name: "Vittoria Rubino 32",
+        subtitle: "32 mm road tire",
         priceDelta: 0,
-        visual: { rimDepth: 40 },
+        visual: { rimDepth: 32 },
       },
       {
         id: "mavic-cosmic",
-        name: "Mavic Cosmic SLR 45",
-        subtitle: "Carbon 45 mm",
-        priceDelta: 640,
+        name: "Mavic Cosmic SL 45",
+        subtitle: "45 mm carbon wheelset",
+        priceDelta: 0,
         visual: { rimDepth: 45 },
       },
       {
         id: "zipp-404",
-        name: "Zipp 404 Firecrest",
-        subtitle: "Carbon 58 mm",
-        priceDelta: 1150,
-        visual: { rimDepth: 58 },
+        name: "Zipp 303 SW Carbon",
+        subtitle: "Carbon road wheelset",
+        priceDelta: 0,
+        visual: { rimDepth: 40 },
+      },
+    ],
+  },
+  {
+    key: "pedals",
+    label: "Pedals",
+    focus: "drivetrain",
+    options: [
+      {
+        id: "keo-classic-3",
+        name: "Keo Classic 3",
+        subtitle: "Road clip-in pedals",
+        priceDelta: 0,
+        visual: {},
+      },
+      {
+        id: "wahoo-speedplay-comp",
+        name: "Wahoo Speedplay Comp Pedals",
+        subtitle: "Dual-sided road pedals",
+        priceDelta: 0,
+        visual: {},
+      },
+    ],
+  },
+  {
+    key: "storage",
+    label: "Storage",
+    focus: "drivetrain",
+    options: [
+      {
+        id: "bottle-cage",
+        name: "Bottle Cage",
+        subtitle: "Integrated downtube storage",
+        priceDelta: 0,
+        visual: {},
       },
     ],
   },
   {
     key: "cockpit",
-    label: "Handlebar",
+    label: "Handlebar Size",
     focus: "cockpit",
     options: [
       {
-        id: "alloy-compact",
-        name: "Alloy Compact Bar",
-        subtitle: "100 mm stem",
+        id: "handlebar-38-80",
+        name: "38CM x 80MM",
+        subtitle: "Compact reach",
         priceDelta: 0,
         visual: { cockpit: "#191b1d" },
       },
       {
-        id: "carbon-integrated",
-        name: "Carbon Integrated Bar",
-        subtitle: "Aero one-piece cockpit",
-        priceDelta: 380,
+        id: "handlebar-42-120",
+        name: "42CM x 120MM",
+        subtitle: "Extended race fit",
+        priceDelta: 0,
         visual: { cockpit: "#050607" },
+      },
+      {
+        id: "handlebar-42-110",
+        name: "42CM x 110MM",
+        subtitle: "Balanced road fit",
+        priceDelta: 0,
+        visual: { cockpit: "#050607" },
+      },
+    ],
+  },
+  {
+    key: "seatAdjustment",
+    label: "Seat Adjustment",
+    focus: "saddle",
+    options: [
+      {
+        id: "seat-low",
+        name: "LOW",
+        subtitle: "Low saddle position",
+        priceDelta: 0,
+        visual: {},
+      },
+      {
+        id: "seat-med",
+        name: "MED",
+        subtitle: "Medium saddle position",
+        priceDelta: 0,
+        visual: {},
+      },
+      {
+        id: "seat-high",
+        name: "HIGH",
+        subtitle: "High saddle position",
+        priceDelta: 0,
+        visual: {},
       },
     ],
   },
@@ -346,31 +522,131 @@ const formatter = new Intl.NumberFormat("en-GB", {
 });
 const modelName = "NEW ULTRA-ROAD";
 const publicAsset = (path: string) => `${import.meta.env.BASE_URL}${path.replace(/^\/+/, "")}`;
-const bikeModelUrl = publicAsset("models/ultra-road-red-axs-zipp.glb");
+const hdriPresets: HdriPreset[] = [
+  {
+    id: "german-town-street",
+    kind: "hdr",
+    label: "German Town",
+    name: "german_town_street_2k.hdr",
+    settings: { hdriIntensity: 1.1, hdriRotation: 0, hdriScale: 0.5 },
+    swatch: "linear-gradient(145deg, #d8e7f2 0%, #8a9da4 46%, #39464a 100%)",
+    url: publicAsset("hdri/german_town_street_2k.hdr"),
+  },
+  {
+    id: "tief-etz",
+    kind: "hdr",
+    label: "Tief Etz",
+    name: "tief_etz_2k.hdr",
+    settings: { hdriIntensity: 1, hdriRotation: 0, hdriScale: 0.5 },
+    swatch: "linear-gradient(145deg, #c9d1bf 0%, #6e7a5d 48%, #243022 100%)",
+    url: publicAsset("hdri/tief_etz_2k.hdr"),
+  },
+  {
+    id: "studio-small",
+    kind: "hdr",
+    label: "Studio Small",
+    name: "studio_small_08_2k.hdr",
+    settings: { hdriIntensity: 1.15, hdriRotation: 0, hdriScale: 0.5 },
+    swatch: "linear-gradient(145deg, #f1ede3 0%, #9a958c 48%, #2d2c2a 100%)",
+    url: publicAsset("hdri/studio_small_08_2k.hdr"),
+  },
+];
+const defaultHdriAsset = hdriPresets[0];
+const backgroundColorPresets = [
+  { color: defaultViewerSettings.environmentColor, id: "default", label: "Default" },
+  { color: "#000000", id: "black", label: "Black" },
+  { color: "#296E85", id: "teal-blue", label: "Teal Blue" },
+];
+const bodyFramePaintMaterialName = "Plane.012_QB_Baked_Material.004";
+const bodyFrameDiffuseMaps: Partial<Record<string, string>> = {
+  "damson-metallic": "textures/skins/damson-metallic.jpg",
+  "slate-grey-metallic": "textures/skins/slate-grey-metallic.jpg",
+};
+function getHdriAssetKind(fileName: string): HdriAssetKind {
+  const extension = fileName.split(".").pop()?.toLowerCase();
+
+  if (extension === "hdr") {
+    return "hdr";
+  }
+
+  if (extension === "exr") {
+    return "exr";
+  }
+
+  return "image";
+}
+const modelAssets = {
+  baseFrame: {
+    id: "baseFrame",
+    path: "models/base/frame.glb",
+  },
+  duraAce105Di2: {
+    id: "duraAce105Di2",
+    path: "models/groupset/dura-ace-105-di2.glb",
+    preload: true,
+  },
+  keoClassic3: {
+    id: "keoClassic3",
+    path: "models/pedals/keo-classic-3.glb",
+    preload: true,
+  },
+  mavicCosmicSl45: {
+    id: "mavicCosmicSl45",
+    path: "models/wheels/mavic-cosmic-sl-45.glb",
+    preload: true,
+    sourceGroundY: -5.9946,
+  },
+  vittoriaRubino32Mm: {
+    id: "vittoriaRubino32Mm",
+    path: "models/wheels/vittoria-rubino-32-mm.glb",
+    preload: true,
+    sourceGroundY: -2.2691,
+  },
+  zipp303SwCarbon: {
+    id: "zipp303SwCarbon",
+    path: "models/wheels/zipp-303-sw-carbon.glb",
+    preload: true,
+    sourceGroundY: -2.2886,
+  },
+} satisfies Record<ModelAssetId, ModelAsset>;
+const bikeModelUrl = publicAsset(modelAssets.baseFrame.path);
+const componentAddonAssets: Partial<Record<ComponentKey, Partial<Record<string, ModelAsset>>>> = {
+  groupset: {
+    "shimano-105-di2": modelAssets.duraAce105Di2,
+  },
+  pedals: {
+    "keo-classic-3": modelAssets.keoClassic3,
+  },
+  wheel: {
+    "level-db40": modelAssets.vittoriaRubino32Mm,
+    "mavic-cosmic": modelAssets.mavicCosmicSl45,
+    "zipp-404": modelAssets.zipp303SwCarbon,
+  },
+};
 const startupCameraDistance = 3.7;
 const startupCameraX = 0.48;
+// Authored GLB wheel-contact height. Keep the studio floor fixed and move assets to this line.
+const bikeSourceGroundY = -2.28;
+const modelGroundY = -0.82;
+const studioFloorClearance = 0.012;
+const studioFloorY = modelGroundY - studioFloorClearance;
+const modelRenderOrder = 10;
 
 const defaultConfig: ConfigState = {
-  paint: "racing-red",
+  paint: "iridescent-white-metallic",
   size: "M",
   components: {
     groupset: "shimano-105-di2",
     crankset: "compact-50-34",
     cassette: "11-30",
     wheel: "level-db40",
-    cockpit: "alloy-compact",
+    cockpit: "handlebar-38-80",
+    pedals: "keo-classic-3",
+    storage: "bottle-cage",
+    seatAdjustment: "seat-low",
     saddle: "prologo",
   },
 };
-
-const railItems = [
-  { id: "frame", label: "Frame" },
-  { id: "wheel", label: "Wheels" },
-  { id: "groupset", label: "Groupset" },
-  { id: "cockpit", label: "Cockpit" },
-  { id: "components", label: "Components" },
-  { id: "paint", label: "Paint & Decals" },
-];
 
 function getPaint(id: string) {
   return paintOptions.find((option) => option.id === id) ?? paintOptions[0];
@@ -380,12 +656,116 @@ function getComponent(group: ComponentGroup, id: string) {
   return group.options.find((option) => option.id === id) ?? group.options[0];
 }
 
+function getComponentGroup(groupKey: ComponentKey) {
+  return componentGroups.find((group) => group.key === groupKey) ?? componentGroups[0];
+}
+
 function getFocusForGroup(groupKey: ComponentKey | null) {
   if (!groupKey) {
     return "default";
   }
 
   return componentGroups.find((group) => group.key === groupKey)?.focus ?? "default";
+}
+
+function getComponentIconKey(key: ComponentKey | "frame"): ComponentIconKey {
+  if (key === "wheel") {
+    return "wheel";
+  }
+
+  if (key === "cockpit") {
+    return "cockpit";
+  }
+
+  if (key === "pedals") {
+    return "pedals";
+  }
+
+  if (key === "storage") {
+    return "storage";
+  }
+
+  if (key === "seatAdjustment" || key === "saddle") {
+    return "saddle";
+  }
+
+  if (key === "groupset" || key === "crankset" || key === "cassette") {
+    return "groupset";
+  }
+
+  return "frame";
+}
+
+function PartIcon({ kind }: { kind: ComponentIconKey }) {
+  if (kind === "wheel") {
+    return (
+      <svg aria-hidden="true" className="part-icon-svg" focusable="false" viewBox="0 0 48 48">
+        <circle cx="24" cy="24" r="15" />
+        <circle cx="24" cy="24" r="3.4" />
+        <path d="M24 9v30M9 24h30M13.4 13.4l21.2 21.2M34.6 13.4 13.4 34.6" />
+      </svg>
+    );
+  }
+
+  if (kind === "cockpit") {
+    return (
+      <svg aria-hidden="true" className="part-icon-svg" focusable="false" viewBox="0 0 48 48">
+        <path d="M13 25h10c3.8 0 5.4-3.7 8.9-3.7H36" />
+        <path d="M13 25c-4.2 0-6.7 2.6-6.7 6.3 0 3.1 2.1 5.1 5 5.1" />
+        <path d="M36 21.3c4 0 6.7 2.9 6.7 6.8 0 3.4-2 5.7-5.1 5.7" />
+        <path d="M22.5 25v-7h8.8" />
+      </svg>
+    );
+  }
+
+  if (kind === "saddle") {
+    return (
+      <svg aria-hidden="true" className="part-icon-svg" focusable="false" viewBox="0 0 48 48">
+        <path d="M8 23.5c5.4-4.5 17.3-5.5 29.5-1.8 2.4.7 3.4 3.6 1.6 5.4-3.5 3.4-13.3 4.2-25.5.8-3.8-1.1-6-2.3-5.6-4.4Z" />
+        <path d="M20 29.4 17.4 38M29 29.8 32.2 38M17.4 38h14.8" />
+      </svg>
+    );
+  }
+
+  if (kind === "groupset") {
+    return (
+      <svg aria-hidden="true" className="part-icon-svg" focusable="false" viewBox="0 0 48 48">
+        <circle cx="20" cy="25" r="10.5" />
+        <circle cx="20" cy="25" r="4" />
+        <path d="M20 14.5v21M9.5 25h21M12.6 17.6l14.8 14.8M27.4 17.6 12.6 32.4" />
+        <path d="M28.3 30.8 38.8 37M38.8 37l2.4-4.2" />
+      </svg>
+    );
+  }
+
+  if (kind === "pedals") {
+    return (
+      <svg aria-hidden="true" className="part-icon-svg" focusable="false" viewBox="0 0 48 48">
+        <path d="M24 14v20M14 18h20M14 30h20" />
+        <path d="M7.5 14.5h12v7h-12zM28.5 26.5h12v7h-12z" />
+        <path d="M19.5 18h9M19.5 30h9" />
+      </svg>
+    );
+  }
+
+  if (kind === "storage") {
+    return (
+      <svg aria-hidden="true" className="part-icon-svg" focusable="false" viewBox="0 0 48 48">
+        <path d="M20 12h8l2.5 6h-13L20 12Z" />
+        <path d="M17.5 18h13l1.5 17c.2 2.4-1.7 4.5-4.1 4.5h-7.8c-2.4 0-4.3-2.1-4.1-4.5l1.5-17Z" />
+        <path d="M14 23c2.8 2.4 17.2 2.4 20 0M15 33c3.2 2.7 14.8 2.7 18 0" />
+      </svg>
+    );
+  }
+
+  return (
+    <svg aria-hidden="true" className="part-icon-svg" focusable="false" viewBox="0 0 48 48">
+      <path d="M8 32h12.8L32 14H16.3L8 32Z" />
+      <path d="M16.3 14 20.8 32 32 14l8 18H20.8" />
+      <circle cx="20.8" cy="32" r="3.4" />
+      <circle cx="40" cy="32" r="3.4" />
+    </svg>
+  );
 }
 
 function tubeBetween(
@@ -462,17 +842,17 @@ function createWheel(x: number, rimDepth: number, materials: Record<string, THRE
 
 function buildBike(config: ConfigState, focus: string) {
   const paint = getPaint(config.paint);
-  const wheelOption = getComponent(componentGroups[3], config.components.wheel);
-  const groupsetOption = getComponent(componentGroups[0], config.components.groupset);
-  const cockpitOption = getComponent(componentGroups[4], config.components.cockpit);
-  const saddleOption = getComponent(componentGroups[5], config.components.saddle);
+  const wheelOption = getComponent(getComponentGroup("wheel"), config.components.wheel);
+  const groupsetOption = getComponent(getComponentGroup("groupset"), config.components.groupset);
+  const cockpitOption = getComponent(getComponentGroup("cockpit"), config.components.cockpit);
+  const saddleOption = getComponent(getComponentGroup("saddle"), config.components.saddle);
 
   const frameMaterial = new THREE.MeshStandardMaterial({
     color: paint.frame,
     emissive: paint.frame,
     emissiveIntensity: 0.08,
     metalness: 0.62,
-    roughness: paint.id === "champagne" ? 0.28 : 0.36,
+    roughness: 0.32,
   });
   const accentMaterial = new THREE.MeshStandardMaterial({
     color: paint.accent,
@@ -705,7 +1085,181 @@ function getTintedColor(baseColor: string, tintColor: string, amount: number) {
   return new THREE.Color(baseColor).lerp(new THREE.Color(tintColor), amount);
 }
 
-function prepareViewportModel(model: THREE.Object3D, anisotropy = 1) {
+function updateViewerHotspots({
+  bounds,
+  camera,
+  container,
+  elements,
+  point,
+}: {
+  bounds: THREE.Box3 | null;
+  camera: THREE.PerspectiveCamera;
+  container: HTMLElement;
+  elements: Map<string, HTMLDivElement>;
+  point: THREE.Vector3;
+}) {
+  const width = container.clientWidth;
+  const height = container.clientHeight;
+
+  if (!bounds || width <= 0 || height <= 0) {
+    elements.forEach((element) => {
+      element.style.opacity = "0";
+      element.style.visibility = "hidden";
+    });
+    return;
+  }
+
+  viewerHotspots.forEach((hotspot) => {
+    const element = elements.get(hotspot.id);
+    if (!element) {
+      return;
+    }
+
+    point.set(
+      THREE.MathUtils.lerp(bounds.min.x, bounds.max.x, hotspot.anchor[0]),
+      THREE.MathUtils.lerp(bounds.min.y, bounds.max.y, hotspot.anchor[1]),
+      THREE.MathUtils.lerp(bounds.min.z, bounds.max.z, hotspot.anchor[2]),
+    );
+    point.project(camera);
+
+    const screenX = (point.x * 0.5 + 0.5) * width;
+    const screenY = (-point.y * 0.5 + 0.5) * height;
+    const isVisible =
+      point.z > -1 &&
+      point.z < 1 &&
+      screenX > -80 &&
+      screenX < width + 80 &&
+      screenY > -60 &&
+      screenY < height + 60;
+
+    element.style.opacity = isVisible ? "1" : "0";
+    element.style.transform = `translate3d(${screenX}px, ${screenY}px, 0)`;
+    element.style.visibility = isVisible ? "visible" : "hidden";
+  });
+}
+
+function createHdriDomeMaterial(settings: ViewerSettings): HdriDomeMaterial {
+  const material = new THREE.ShaderMaterial({
+    depthTest: false,
+    depthWrite: false,
+    fog: false,
+    fragmentShader: `
+      uniform sampler2D hdriMap;
+      uniform float hdriIntensity;
+      uniform float hdriRotation;
+      uniform float hdriScale;
+      varying vec3 vWorldDirection;
+      #include <common>
+
+      void main() {
+        vec3 direction = normalize(vWorldDirection);
+        float rotationCos = cos(hdriRotation);
+        float rotationSin = sin(hdriRotation);
+        direction.xz = mat2(rotationCos, -rotationSin, rotationSin, rotationCos) * direction.xz;
+
+        vec2 sampleUV = equirectUv(direction);
+        float scale = clamp(hdriScale, 0.5, 2.5);
+        sampleUV = (sampleUV - 0.5) / scale + 0.5;
+        sampleUV.x = fract(sampleUV.x);
+        sampleUV.y = clamp(sampleUV.y, 0.0, 1.0);
+
+        gl_FragColor = texture2D(hdriMap, sampleUV);
+        gl_FragColor.rgb *= hdriIntensity;
+        #include <tonemapping_fragment>
+        #include <colorspace_fragment>
+      }
+    `,
+    side: THREE.BackSide,
+    uniforms: {
+      hdriIntensity: { value: settings.hdriIntensity },
+      hdriMap: { value: null },
+      hdriRotation: { value: THREE.MathUtils.degToRad(settings.hdriRotation) },
+      hdriScale: { value: settings.hdriScale },
+    },
+    vertexShader: `
+      varying vec3 vWorldDirection;
+
+      void main() {
+        vec4 worldPosition = modelMatrix * vec4(position, 1.0);
+        vWorldDirection = normalize(worldPosition.xyz - cameraPosition);
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `,
+  });
+
+  material.toneMapped = true;
+  return material as HdriDomeMaterial;
+}
+
+function applyViewerEnvironment({
+  backdropMaterial,
+  hdriBackgroundMap,
+  defaultEnvironmentMap,
+  hdriDome,
+  hdriDomeMaterial,
+  hdriEnvironmentMap,
+  scene,
+  viewerSettings,
+}: {
+  backdropMaterial: THREE.MeshBasicMaterial | null;
+  defaultEnvironmentMap: THREE.Texture | null;
+  hdriBackgroundMap: THREE.Texture | null;
+  hdriDome: THREE.Mesh<THREE.SphereGeometry, HdriDomeMaterial> | null;
+  hdriDomeMaterial: HdriDomeMaterial | null;
+  hdriEnvironmentMap: THREE.Texture | null;
+  scene: THREE.Scene;
+  viewerSettings: ViewerSettings;
+}) {
+  const hasHdri = Boolean(hdriBackgroundMap && hdriEnvironmentMap);
+  const environmentColor = new THREE.Color(viewerSettings.environmentColor);
+
+  scene.environment = hdriEnvironmentMap ?? defaultEnvironmentMap;
+  scene.environmentIntensity = hasHdri
+    ? viewerSettings.hdriIntensity
+    : viewerSettings.environmentIntensity;
+  scene.environmentRotation.y = THREE.MathUtils.degToRad(
+    hasHdri ? viewerSettings.hdriRotation : viewerSettings.environmentRotation,
+  );
+
+  if (hasHdri) {
+    scene.background = null;
+    scene.backgroundIntensity = 1;
+    scene.backgroundRotation.y = 0;
+    scene.backgroundBlurriness = 0;
+  } else {
+    scene.background = getTintedColor("#050505", viewerSettings.environmentColor, 0.055);
+    scene.backgroundIntensity = 1;
+    scene.backgroundRotation.y = 0;
+    scene.backgroundBlurriness = 0;
+  }
+
+  if (scene.fog instanceof THREE.Fog) {
+    scene.fog.color.copy(getTintedColor("#050505", viewerSettings.environmentColor, 0.12));
+  }
+
+  if (hdriDome) {
+    hdriDome.visible = hasHdri;
+    hdriDome.scale.setScalar(32 * viewerSettings.hdriScale);
+  }
+
+  if (hdriDomeMaterial) {
+    hdriDomeMaterial.uniforms.hdriMap.value = hdriBackgroundMap;
+    hdriDomeMaterial.uniforms.hdriIntensity.value = Math.max(0.05, viewerSettings.hdriIntensity);
+    hdriDomeMaterial.uniforms.hdriRotation.value = THREE.MathUtils.degToRad(
+      viewerSettings.hdriRotation,
+    );
+    hdriDomeMaterial.uniforms.hdriScale.value = viewerSettings.hdriScale;
+  }
+
+  if (backdropMaterial) {
+    backdropMaterial.color.copy(getTintedColor("#ffffff", viewerSettings.environmentColor, 0.16));
+    backdropMaterial.opacity = hasHdri ? 0 : viewerSettings.backdropGlow;
+  }
+
+  return environmentColor;
+}
+
+function prepareModelForViewport(model: THREE.Object3D, anisotropy = 1) {
   model.traverse((child) => {
     const mesh = child as THREE.Mesh;
 
@@ -715,6 +1269,7 @@ function prepareViewportModel(model: THREE.Object3D, anisotropy = 1) {
 
     mesh.castShadow = true;
     mesh.receiveShadow = true;
+    mesh.renderOrder = modelRenderOrder;
 
     if (Array.isArray(mesh.material)) {
       mesh.material.forEach((material) => tuneStudioMaterial(material, anisotropy));
@@ -722,6 +1277,10 @@ function prepareViewportModel(model: THREE.Object3D, anisotropy = 1) {
       tuneStudioMaterial(mesh.material, anisotropy);
     }
   });
+}
+
+function prepareViewportModel(model: THREE.Object3D, anisotropy = 1) {
+  prepareModelForViewport(model, anisotropy);
 
   const bounds = new THREE.Box3().setFromObject(model);
   const size = bounds.getSize(new THREE.Vector3());
@@ -734,7 +1293,7 @@ function prepareViewportModel(model: THREE.Object3D, anisotropy = 1) {
   model.position.sub(center);
   group.add(model);
   group.scale.setScalar(scale);
-  group.position.y = -0.82 + (size.y * scale) / 2;
+  group.position.y = modelGroundY - (bikeSourceGroundY - center.y) * scale;
 
   const look = new THREE.Vector3(startupCameraX, group.position.y, 0);
   const camera = new THREE.Vector3(
@@ -743,11 +1302,62 @@ function prepareViewportModel(model: THREE.Object3D, anisotropy = 1) {
     startupCameraDistance,
   );
 
-  return { camera, group, look };
+  return { camera, group, look, sourceCenter: center };
+}
+
+function prepareAttachedModel(
+  model: THREE.Object3D,
+  sourceCenter: THREE.Vector3,
+  asset: ModelAsset,
+  anisotropy = 1,
+) {
+  prepareModelForViewport(model, anisotropy);
+  model.position.sub(sourceCenter);
+
+  if (typeof asset.sourceGroundY === "number") {
+    model.position.y += bikeSourceGroundY - asset.sourceGroundY;
+  }
+
+  return model;
+}
+
+function getModelAssetUrl(asset: ModelAsset) {
+  return publicAsset(asset.path);
+}
+
+function getModelCacheKey(asset: ModelAsset, sourceCenter: THREE.Vector3) {
+  const centerKey = sourceCenter
+    .toArray()
+    .map((value) => value.toFixed(4))
+    .join(":");
+
+  return `${asset.id}:${centerKey}`;
+}
+
+function getPreloadAddonAssets() {
+  const assets = new Map<ModelAssetId, ModelAsset>();
+
+  Object.values(componentAddonAssets).forEach((componentAssets) => {
+    Object.values(componentAssets ?? {}).forEach((asset) => {
+      if (asset.preload) {
+        assets.set(asset.id, asset);
+      }
+    });
+  });
+
+  return Array.from(assets.values());
 }
 
 function getFrameSizeMorphValue(sizeId: string) {
   return frameSizeMorphValues[sizeId] ?? frameSizeMorphValues.S;
+}
+
+function getHandlebarSizeMorphValue(optionId: string) {
+  return handlebarSizeMorphValues[optionId] ?? handlebarSizeMorphValues["handlebar-38-80"];
+}
+
+function getSeatAdjustmentMorphValue(optionId: string) {
+  return seatAdjustmentMorphValues[optionId] ?? seatAdjustmentMorphValues["seat-low"];
 }
 
 function getObjectNameTrail(object: THREE.Object3D) {
@@ -766,15 +1376,29 @@ function getObjectNameTrail(object: THREE.Object3D) {
 }
 
 function isBodyFrameMesh(mesh: THREE.Mesh) {
+  if (typeof mesh.morphTargetDictionary?.Frame === "number") {
+    return true;
+  }
+
   const nameTrail = getObjectNameTrail(mesh);
   return (
     nameTrail.includes("body-frame") ||
     nameTrail.includes("body frame") ||
-    nameTrail.includes("body_frame")
+    nameTrail.includes("body_frame") ||
+    nameTrail.includes("body-mesh") ||
+    nameTrail.includes("body mesh") ||
+    nameTrail.includes("cycle_combined") ||
+    nameTrail.includes("cycle combined")
   );
 }
 
 function getPrimaryMorphTargetIndex(mesh: THREE.Mesh) {
+  const frameIndex = mesh.morphTargetDictionary?.Frame;
+
+  if (typeof frameIndex === "number") {
+    return frameIndex;
+  }
+
   const namedIndex = mesh.morphTargetDictionary?.["Key 1"];
 
   if (typeof namedIndex === "number") {
@@ -785,6 +1409,11 @@ function getPrimaryMorphTargetIndex(mesh: THREE.Mesh) {
   return typeof firstIndex === "number" ? firstIndex : 0;
 }
 
+function getNamedMorphTargetIndex(mesh: THREE.Mesh, targetName: string) {
+  const targetIndex = mesh.morphTargetDictionary?.[targetName];
+  return typeof targetIndex === "number" ? targetIndex : -1;
+}
+
 function collectFrameMorphMeshes(root: THREE.Object3D) {
   const meshes: THREE.Mesh[] = [];
 
@@ -792,6 +1421,133 @@ function collectFrameMorphMeshes(root: THREE.Object3D) {
     const mesh = child as THREE.Mesh;
 
     if (!mesh.isMesh || !mesh.morphTargetInfluences?.length || !isBodyFrameMesh(mesh)) {
+      return;
+    }
+
+    meshes.push(mesh);
+  });
+
+  return meshes;
+}
+
+function cloneMaterialForPaintEditing(material: THREE.Material) {
+  const clonedMaterial = material.clone();
+  clonedMaterial.needsUpdate = true;
+  return clonedMaterial;
+}
+
+function prepareBodyFramePaintMaterials(root: THREE.Object3D) {
+  const materials: BodyFramePaintMaterial[] = [];
+
+  root.traverse((child) => {
+    const mesh = child as THREE.Mesh;
+
+    if (!mesh.isMesh || !mesh.material) {
+      return;
+    }
+
+    const sourceMaterial = mesh.material;
+
+    if (!sourceMaterial) {
+      return;
+    }
+
+    const hasTargetMaterial = Array.isArray(sourceMaterial)
+      ? sourceMaterial.some((material) => material.name === bodyFramePaintMaterialName)
+      : sourceMaterial.name === bodyFramePaintMaterialName;
+
+    if (!hasTargetMaterial) {
+      return;
+    }
+
+    const clonedMaterial = Array.isArray(sourceMaterial)
+      ? sourceMaterial.map((material) =>
+          material.name === bodyFramePaintMaterialName
+            ? cloneMaterialForPaintEditing(material)
+            : material,
+        )
+      : cloneMaterialForPaintEditing(sourceMaterial);
+
+    mesh.material = clonedMaterial;
+
+    const meshMaterials = Array.isArray(clonedMaterial) ? clonedMaterial : [clonedMaterial];
+
+    meshMaterials.forEach((material) => {
+      const pbrMaterial = material as THREE.MeshStandardMaterial;
+
+      if (pbrMaterial.name !== bodyFramePaintMaterialName || !("map" in pbrMaterial)) {
+        return;
+      }
+
+      materials.push({
+        defaultMap: pbrMaterial.map ?? null,
+        material: pbrMaterial,
+      });
+    });
+  });
+
+  return materials;
+}
+
+function configureBodyFrameDiffuseTexture(texture: THREE.Texture, anisotropy: number) {
+  texture.anisotropy = Math.min(anisotropy, 8);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.flipY = false;
+  texture.needsUpdate = true;
+}
+
+function applyBodyFramePaintTexture(
+  materials: BodyFramePaintMaterial[],
+  paintId: string,
+  textures: Partial<Record<string, THREE.Texture>>,
+) {
+  const diffuseMapPath = bodyFrameDiffuseMaps[paintId];
+  const diffuseMap = diffuseMapPath ? textures[paintId] : null;
+
+  if (diffuseMapPath && !diffuseMap) {
+    return false;
+  }
+
+  materials.forEach((paintMaterial) => {
+    const { material } = paintMaterial;
+    material.map = diffuseMap ?? paintMaterial.defaultMap;
+    material.needsUpdate = true;
+  });
+
+  return materials.length > 0;
+}
+
+function collectHandleMorphMeshes(root: THREE.Object3D) {
+  const meshes: THREE.Mesh[] = [];
+
+  root.traverse((child) => {
+    const mesh = child as THREE.Mesh;
+
+    if (
+      !mesh.isMesh ||
+      !mesh.morphTargetInfluences?.length ||
+      getNamedMorphTargetIndex(mesh, "Handle") < 0
+    ) {
+      return;
+    }
+
+    meshes.push(mesh);
+  });
+
+  return meshes;
+}
+
+function collectSeatMorphMeshes(root: THREE.Object3D) {
+  const meshes: THREE.Mesh[] = [];
+
+  root.traverse((child) => {
+    const mesh = child as THREE.Mesh;
+
+    if (
+      !mesh.isMesh ||
+      !mesh.morphTargetInfluences?.length ||
+      getNamedMorphTargetIndex(mesh, "Seat") < 0
+    ) {
       return;
     }
 
@@ -812,6 +1568,42 @@ function applyFrameSizeMorph(meshes: THREE.Mesh[], sizeId: string) {
     }
 
     const targetIndex = getPrimaryMorphTargetIndex(mesh);
+
+    if (targetIndex >= 0 && targetIndex < influences.length) {
+      influences[targetIndex] = value;
+    }
+  });
+}
+
+function applyHandlebarSizeMorph(meshes: THREE.Mesh[], optionId: string) {
+  const value = getHandlebarSizeMorphValue(optionId);
+
+  meshes.forEach((mesh) => {
+    const influences = mesh.morphTargetInfluences;
+
+    if (!influences?.length) {
+      return;
+    }
+
+    const targetIndex = getNamedMorphTargetIndex(mesh, "Handle");
+
+    if (targetIndex >= 0 && targetIndex < influences.length) {
+      influences[targetIndex] = value;
+    }
+  });
+}
+
+function applySeatAdjustmentMorph(meshes: THREE.Mesh[], optionId: string) {
+  const value = getSeatAdjustmentMorphValue(optionId);
+
+  meshes.forEach((mesh) => {
+    const influences = mesh.morphTargetInfluences;
+
+    if (!influences?.length) {
+      return;
+    }
+
+    const targetIndex = getNamedMorphTargetIndex(mesh, "Seat");
 
     if (targetIndex >= 0 && targetIndex < influences.length) {
       influences[targetIndex] = value;
@@ -922,18 +1714,30 @@ function createFloorGlowTexture() {
 
 function createContactAoTexture() {
   const canvas = document.createElement("canvas");
-  canvas.width = 512;
+  canvas.width = 768;
   canvas.height = 512;
   const context = canvas.getContext("2d");
 
   if (context) {
-    const ao = context.createRadialGradient(256, 256, 20, 256, 256, 250);
-    ao.addColorStop(0, "rgba(255, 255, 255, 0.92)");
-    ao.addColorStop(0.28, "rgba(255, 255, 255, 0.58)");
-    ao.addColorStop(0.56, "rgba(255, 255, 255, 0.18)");
-    ao.addColorStop(1, "rgba(255, 255, 255, 0)");
-    context.fillStyle = ao;
-    context.fillRect(0, 0, canvas.width, canvas.height);
+    const drawSoftEllipse = (x: number, y: number, radiusX: number, radiusY: number, strength: number) => {
+      context.save();
+      context.translate(x, y);
+      context.rotate(-0.05);
+      context.scale(radiusX, radiusY);
+      const shadow = context.createRadialGradient(0, 0, 0.02, 0, 0, 1);
+      shadow.addColorStop(0, `rgba(255, 255, 255, ${strength})`);
+      shadow.addColorStop(0.35, `rgba(255, 255, 255, ${strength * 0.48})`);
+      shadow.addColorStop(0.72, `rgba(255, 255, 255, ${strength * 0.12})`);
+      shadow.addColorStop(1, "rgba(255, 255, 255, 0)");
+      context.fillStyle = shadow;
+      context.fillRect(-1, -1, 2, 2);
+      context.restore();
+    };
+
+    drawSoftEllipse(384, 282, 345, 105, 0.42);
+    drawSoftEllipse(220, 292, 138, 42, 0.34);
+    drawSoftEllipse(548, 292, 146, 42, 0.34);
+    drawSoftEllipse(382, 292, 118, 38, 0.22);
   }
 
   const texture = new THREE.CanvasTexture(canvas);
@@ -965,7 +1769,7 @@ function buildStudioSurfaces(): StudioSurfaces {
     floorMaterial,
   );
   floor.rotation.x = -Math.PI / 2;
-  floor.position.y = -0.82;
+  floor.position.y = studioFloorY;
   floor.renderOrder = 0;
   floor.receiveShadow = true;
   group.add(floor);
@@ -973,30 +1777,32 @@ function buildStudioSurfaces(): StudioSurfaces {
   const contactAoMaterial = new THREE.MeshBasicMaterial({
     alphaMap: contactAoTexture,
     color: "#000000",
+    depthTest: true,
     depthWrite: false,
     opacity: defaultViewerSettings.aoIntensity,
     polygonOffset: true,
-    polygonOffsetFactor: -2,
-    polygonOffsetUnits: -2,
+    polygonOffsetFactor: 2,
+    polygonOffsetUnits: 2,
     transparent: true,
   });
   const contactAo = new THREE.Mesh(
-    new THREE.PlaneGeometry(5.9, 2.6),
+    new THREE.PlaneGeometry(6.15, 2.75),
     contactAoMaterial,
   );
   contactAo.rotation.x = -Math.PI / 2;
-  contactAo.position.set(0, -0.812, 0.16);
+  contactAo.position.set(0, studioFloorY + 0.003, 0.16);
   contactAo.renderOrder = 1;
   group.add(contactAo);
 
   const floorGlowMaterial = new THREE.MeshBasicMaterial({
     blending: THREE.AdditiveBlending,
+    depthTest: true,
     depthWrite: false,
     map: floorGlowTexture,
     opacity: defaultViewerSettings.floorGlow,
     polygonOffset: true,
-    polygonOffsetFactor: -3,
-    polygonOffsetUnits: -3,
+    polygonOffsetFactor: 3,
+    polygonOffsetUnits: 3,
     transparent: true,
   });
   const floorGlow = new THREE.Mesh(
@@ -1004,18 +1810,19 @@ function buildStudioSurfaces(): StudioSurfaces {
     floorGlowMaterial,
   );
   floorGlow.rotation.x = -Math.PI / 2;
-  floorGlow.position.set(0, -0.816, 0.2);
+  floorGlow.position.set(0, studioFloorY + 0.005, 0.2);
   floorGlow.renderOrder = 2;
   group.add(floorGlow);
 
   const stageRingRadius = 1.72;
   const stageRingMaterial = new THREE.MeshBasicMaterial({
     color: "#c7a550",
+    depthTest: true,
     depthWrite: false,
     opacity: 0.12,
     polygonOffset: true,
-    polygonOffsetFactor: -4,
-    polygonOffsetUnits: -4,
+    polygonOffsetFactor: 4,
+    polygonOffsetUnits: 4,
     side: THREE.DoubleSide,
     transparent: true,
   });
@@ -1024,7 +1831,7 @@ function buildStudioSurfaces(): StudioSurfaces {
     stageRingMaterial,
   );
   stageRing.rotation.x = -Math.PI / 2;
-  stageRing.position.y = -0.808;
+  stageRing.position.y = studioFloorY + 0.007;
   stageRing.renderOrder = 3;
   group.add(stageRing);
 
@@ -1033,17 +1840,18 @@ function buildStudioSurfaces(): StudioSurfaces {
     new THREE.MeshBasicMaterial({
       blending: THREE.AdditiveBlending,
       color: "#f2d982",
+      depthTest: true,
       depthWrite: false,
       opacity: 0.13,
       polygonOffset: true,
-      polygonOffsetFactor: -5,
-      polygonOffsetUnits: -5,
+      polygonOffsetFactor: 5,
+      polygonOffsetUnits: 5,
       side: THREE.DoubleSide,
       transparent: true,
     }),
   );
   stageRingHighlight.rotation.x = -Math.PI / 2;
-  stageRingHighlight.position.y = -0.806;
+  stageRingHighlight.position.y = studioFloorY + 0.009;
   stageRingHighlight.renderOrder = 4;
   group.add(stageRingHighlight);
 
@@ -1062,10 +1870,14 @@ function buildStudioSurfaces(): StudioSurfaces {
 
   return {
     backdropMaterial,
+    contactAo,
     contactAoMaterial,
+    floor,
+    floorGlow,
     floorGlowMaterial,
     floorMaterial,
     group,
+    stageRing,
     stageRingMaterial,
     stageRingHighlight,
   };
@@ -1140,43 +1952,33 @@ function StudioColorPalette({
 }) {
   const colorValue = /^#[0-9a-f]{6}$/i.test(value) ? value : defaultViewerSettings.environmentColor;
 
-  const updateHexValue = (nextValue: string) => {
-    const trimmedValue = nextValue.trim();
-    const nextDraft = trimmedValue.startsWith("#") ? trimmedValue : `#${trimmedValue}`;
-
-    if (/^#[0-9a-f]{6}$/i.test(nextDraft)) {
-      onChange(nextDraft.toUpperCase());
-    }
-  };
-
   return (
     <div className="studio-color-control">
       <span>
         <em>Environment Color</em>
         <strong>{colorValue.toUpperCase()}</strong>
       </span>
-      <label className="studio-color-picker">
-        <input
-          aria-label="Environment color palette"
-          onChange={(event) => onChange(event.currentTarget.value)}
-          type="color"
-          value={colorValue}
-        />
-        <input
-          aria-label="Environment color hex value"
-          defaultValue={colorValue.toUpperCase()}
-          key={colorValue}
-          maxLength={7}
-          onBlur={(event) => {
-            if (!/^#[0-9a-f]{6}$/i.test(event.currentTarget.value)) {
-              event.currentTarget.value = colorValue.toUpperCase();
-            }
-          }}
-          onChange={(event) => updateHexValue(event.currentTarget.value)}
-          spellCheck={false}
-          type="text"
-        />
-      </label>
+      <div className="studio-background-presets" aria-label="Background color presets">
+        {backgroundColorPresets.map((preset) => {
+          const presetColor = preset.color.toUpperCase();
+          const isActive = colorValue.toUpperCase() === presetColor;
+
+          return (
+            <button
+              aria-label={`${preset.label} background color`}
+              aria-pressed={isActive}
+              className={isActive ? "studio-background-preset active" : "studio-background-preset"}
+              key={preset.id}
+              onClick={() => onChange(presetColor)}
+              title={preset.label}
+              type="button"
+            >
+              <span style={{ backgroundColor: preset.color }} />
+              <em>{preset.label}</em>
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -1184,19 +1986,55 @@ function StudioColorPalette({
 function BikeScene({
   config,
   focus,
+  hdriAsset,
+  introPhase,
+  onIntroComplete,
+  onSceneReady,
+  showHotspots,
   viewerSettings,
 }: {
   config: ConfigState;
   focus: string;
+  hdriAsset: HdriAsset | null;
+  introPhase: IntroPhase;
+  onIntroComplete: () => void;
+  onSceneReady: () => void;
+  showHotspots: boolean;
   viewerSettings: ViewerSettings;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
+  const defaultEnvironmentMapRef = useRef<THREE.Texture | null>(null);
+  const hdriBackgroundMapRef = useRef<THREE.Texture | null>(null);
+  const hdriEnvironmentMapRef = useRef<THREE.Texture | null>(null);
+  const hdriDomeRef = useRef<THREE.Mesh<THREE.SphereGeometry, HdriDomeMaterial> | null>(null);
+  const hdriDomeMaterialRef = useRef<HdriDomeMaterial | null>(null);
   const bikeRef = useRef<THREE.Group | null>(null);
   const frameMorphMeshesRef = useRef<THREE.Mesh[]>([]);
+  const handleMorphMeshesRef = useRef<THREE.Mesh[]>([]);
+  const seatMorphMeshesRef = useRef<THREE.Mesh[]>([]);
+  const bodyFramePaintMaterialsRef = useRef<BodyFramePaintMaterial[]>([]);
+  const bodyFrameDiffuseTexturesRef = useRef<Partial<Record<string, THREE.Texture>>>({});
+  const activeAddonRefs = useRef(new Map<ComponentKey, THREE.Object3D>());
+  const addonModelCacheRef = useRef(new Map<string, THREE.Object3D>());
+  const addonModelLoadCacheRef = useRef(new Map<string, Promise<THREE.Object3D>>());
+  const addonRequestCountersRef = useRef(new Map<ComponentKey, number>());
+  const hotspotBoundsRef = useRef<THREE.Box3 | null>(null);
+  const hotspotElementsRef = useRef(new Map<string, HTMLDivElement>());
+  const hotspotProjectionPointRef = useRef(new THREE.Vector3());
+  const paintRef = useRef(config.paint);
   const sizeRef = useRef(config.size);
+  const handlebarSizeRef = useRef(config.components.cockpit);
+  const seatAdjustmentRef = useRef(config.components.seatAdjustment);
+  const componentOptionsRef = useRef(config.components);
   const viewerSettingsRef = useRef(viewerSettings);
+  const addonLoaderRef = useRef<GLTFLoader | null>(null);
+  const anisotropyRef = useRef(1);
+  const assetSourceCenterRef = useRef<THREE.Vector3 | null>(null);
+  const syncAddonModelRef = useRef<(componentKey: ComponentKey, optionId: string) => void>(
+    () => undefined,
+  );
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const controlsRef = useRef<OrbitControls | null>(null);
   const ambientLightRef = useRef<THREE.HemisphereLight | null>(null);
@@ -1216,6 +2054,46 @@ function BikeScene({
   const targetCameraRef = useRef(new THREE.Vector3(startupCameraX, 1.12, startupCameraDistance));
   const targetLookRef = useRef(new THREE.Vector3(0, 1.1, 0));
   const lookRef = useRef(new THREE.Vector3(0, 1.1, 0));
+  const introPhaseRef = useRef(introPhase);
+  const introStartedRef = useRef(false);
+  const introCompletedRef = useRef(false);
+  const introStartTimeRef = useRef(0);
+  const introBaseCameraRef = useRef<THREE.Vector3 | null>(null);
+  const introBaseLookRef = useRef<THREE.Vector3 | null>(null);
+  const onIntroCompleteRef = useRef(onIntroComplete);
+  const onSceneReadyRef = useRef(onSceneReady);
+
+  const refreshHotspotBounds = () => {
+    const bike = bikeRef.current;
+
+    if (!bike) {
+      hotspotBoundsRef.current = null;
+      return;
+    }
+
+    const bounds = new THREE.Box3().setFromObject(bike);
+    const size = bounds.getSize(new THREE.Vector3());
+    hotspotBoundsRef.current = size.lengthSq() > 0 ? bounds : null;
+  };
+
+  useEffect(() => {
+    introPhaseRef.current = introPhase;
+
+    if (introPhase === "loading") {
+      introStartedRef.current = false;
+      introCompletedRef.current = false;
+      introBaseCameraRef.current = null;
+      introBaseLookRef.current = null;
+    }
+  }, [introPhase]);
+
+  useEffect(() => {
+    onIntroCompleteRef.current = onIntroComplete;
+  }, [onIntroComplete]);
+
+  useEffect(() => {
+    onSceneReadyRef.current = onSceneReady;
+  }, [onSceneReady]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -1223,6 +2101,10 @@ function BikeScene({
       return undefined;
     }
 
+    const addonModelCache = addonModelCacheRef.current;
+    const addonModelLoadCache = addonModelLoadCacheRef.current;
+    const addonRequestCounters = addonRequestCountersRef.current;
+    const hotspotElements = hotspotElementsRef.current;
     const scene = new THREE.Scene();
     scene.background = new THREE.Color("#050505");
     scene.fog = new THREE.Fog("#050505", 7.5, 16);
@@ -1235,6 +2117,7 @@ function BikeScene({
 
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
     rendererRef.current = renderer;
+    anisotropyRef.current = renderer.capabilities.getMaxAnisotropy();
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = toneMappingValues[initialSettings.toneMapping];
     renderer.toneMappingExposure = initialSettings.exposure;
@@ -1246,11 +2129,24 @@ function BikeScene({
     const pmremGenerator = new THREE.PMREMGenerator(renderer);
     const studioEnvironment = new RoomEnvironment();
     const environmentMap = pmremGenerator.fromScene(studioEnvironment, 0.04).texture;
+    defaultEnvironmentMapRef.current = environmentMap;
     scene.environment = environmentMap;
     scene.environmentIntensity = initialSettings.environmentIntensity;
     scene.environmentRotation.y = THREE.MathUtils.degToRad(initialSettings.environmentRotation);
     studioEnvironment.dispose();
     pmremGenerator.dispose();
+
+    const hdriDomeMaterial = createHdriDomeMaterial(initialSettings);
+    const hdriDome = new THREE.Mesh(
+      new THREE.SphereGeometry(1, 96, 48),
+      hdriDomeMaterial,
+    );
+    hdriDome.renderOrder = -100;
+    hdriDome.visible = false;
+    hdriDome.scale.setScalar(32 * initialSettings.hdriScale);
+    hdriDomeRef.current = hdriDome;
+    hdriDomeMaterialRef.current = hdriDomeMaterial;
+    scene.add(hdriDome);
 
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
@@ -1308,16 +2204,41 @@ function BikeScene({
     stageRingHighlightMaterialRef.current = studioSurfaces.stageRingHighlight.material;
     scene.add(studioSurfaces.group);
 
+    const refreshModelMaterials = () => {
+      modelMaterialsRef.current = bikeRef.current ? collectModelMaterials(bikeRef.current) : [];
+      applyModelAmbientOcclusion(modelMaterialsRef.current, viewerSettingsRef.current.modelAoIntensity);
+    };
+
+    const applyCurrentFramePaintTexture = () => {
+      const didApply = applyBodyFramePaintTexture(
+        bodyFramePaintMaterialsRef.current,
+        paintRef.current,
+        bodyFrameDiffuseTexturesRef.current,
+      );
+
+      if (didApply) {
+        applyModelAmbientOcclusion(modelMaterialsRef.current, viewerSettingsRef.current.modelAoIntensity);
+      }
+    };
+
+    const detachActiveAddonModels = () => {
+      activeAddonRefs.current.forEach((addon) => {
+        addon.parent?.remove(addon);
+      });
+      activeAddonRefs.current.clear();
+    };
+
     const replaceBike = (nextBike: THREE.Group) => {
       if (bikeRef.current) {
+        detachActiveAddonModels();
         scene.remove(bikeRef.current);
         disposeObject(bikeRef.current);
       }
 
       bikeRef.current = nextBike;
-      modelMaterialsRef.current = collectModelMaterials(nextBike);
-      applyModelAmbientOcclusion(modelMaterialsRef.current, viewerSettingsRef.current.modelAoIntensity);
+      refreshModelMaterials();
       scene.add(nextBike);
+      refreshHotspotBounds();
     };
 
     let cancelled = false;
@@ -1326,6 +2247,129 @@ function BikeScene({
 
     const loader = new GLTFLoader();
     loader.setDRACOLoader(dracoLoader);
+    addonLoaderRef.current = loader;
+    const textureLoader = new THREE.TextureLoader();
+    Object.entries(bodyFrameDiffuseMaps).forEach(([paintId, texturePath]) => {
+      textureLoader.load(publicAsset(texturePath), (texture) => {
+        if (cancelled) {
+          texture.dispose();
+          return;
+        }
+
+        configureBodyFrameDiffuseTexture(texture, anisotropyRef.current);
+        bodyFrameDiffuseTexturesRef.current[paintId] = texture;
+        applyCurrentFramePaintTexture();
+      });
+    });
+    let preloadTimer: number | undefined;
+
+    const removeAddonModel = (componentKey: ComponentKey) => {
+      const addon = activeAddonRefs.current.get(componentKey);
+
+      if (!addon) {
+        return;
+      }
+
+      addon.parent?.remove(addon);
+      activeAddonRefs.current.delete(componentKey);
+      refreshModelMaterials();
+      refreshHotspotBounds();
+    };
+
+    const loadCachedAddonModel = (
+      asset: ModelAsset,
+      sourceCenter: THREE.Vector3,
+    ): Promise<THREE.Object3D> => {
+      const cacheKey = getModelCacheKey(asset, sourceCenter);
+      const cachedModel = addonModelCacheRef.current.get(cacheKey);
+
+      if (cachedModel) {
+        return Promise.resolve(cachedModel);
+      }
+
+      const pendingModel = addonModelLoadCacheRef.current.get(cacheKey);
+
+      if (pendingModel) {
+        return pendingModel;
+      }
+
+      if (!addonLoaderRef.current) {
+        return Promise.reject(new Error("3D add-on loader is not ready."));
+      }
+
+      const modelPromise = new Promise<THREE.Object3D>((resolve, reject) => {
+        addonLoaderRef.current?.load(
+          getModelAssetUrl(asset),
+          (gltf) => {
+            if (cancelled) {
+              disposeObject(gltf.scene);
+              reject(new Error("3D add-on load was cancelled."));
+              return;
+            }
+
+            const addon = prepareAttachedModel(gltf.scene, sourceCenter, asset, anisotropyRef.current);
+            addon.name = `addon-${asset.id}`;
+            addonModelCacheRef.current.set(cacheKey, addon);
+            resolve(addon);
+          },
+          undefined,
+          reject,
+        );
+      }).finally(() => {
+        addonModelLoadCacheRef.current.delete(cacheKey);
+      });
+
+      addonModelLoadCacheRef.current.set(cacheKey, modelPromise);
+      return modelPromise;
+    };
+
+    const syncAddonModel = (componentKey: ComponentKey, optionId: string) => {
+      const asset = componentAddonAssets[componentKey]?.[optionId];
+      const requestId = (addonRequestCountersRef.current.get(componentKey) ?? 0) + 1;
+      addonRequestCountersRef.current.set(componentKey, requestId);
+      removeAddonModel(componentKey);
+
+      if (!asset || !bikeRef.current || !assetSourceCenterRef.current) {
+        return;
+      }
+
+      loadCachedAddonModel(asset, assetSourceCenterRef.current.clone())
+        .then((addon) => {
+          if (
+            cancelled ||
+            requestId !== addonRequestCountersRef.current.get(componentKey) ||
+            componentOptionsRef.current[componentKey] !== optionId ||
+            !bikeRef.current
+          ) {
+            return;
+          }
+
+          activeAddonRefs.current.set(componentKey, addon);
+          bikeRef.current.add(addon);
+          refreshModelMaterials();
+          refreshHotspotBounds();
+        })
+        .catch(() => {
+          if (requestId === addonRequestCountersRef.current.get(componentKey)) {
+            activeAddonRefs.current.delete(componentKey);
+          }
+        });
+    };
+
+    const preloadAddonModels = () => {
+      const sourceCenter = assetSourceCenterRef.current;
+
+      if (!sourceCenter) {
+        return;
+      }
+
+      getPreloadAddonAssets().forEach((asset) => {
+        loadCachedAddonModel(asset, sourceCenter.clone()).catch(() => undefined);
+      });
+    };
+
+    syncAddonModelRef.current = syncAddonModel;
+
     loader.load(
       bikeModelUrl,
       (gltf) => {
@@ -1333,12 +2377,13 @@ function BikeScene({
           return;
         }
 
-        const { camera: assetCamera, group, look } = prepareViewportModel(
+        const { camera: assetCamera, group, look, sourceCenter } = prepareViewportModel(
           gltf.scene,
-          renderer.capabilities.getMaxAnisotropy(),
+          anisotropyRef.current,
         );
         modelLoadedRef.current = true;
         fallbackRef.current = false;
+        assetSourceCenterRef.current = sourceCenter;
         assetCameraRef.current = { camera: assetCamera, look };
         targetCameraRef.current.copy(assetCamera);
         targetLookRef.current.copy(look);
@@ -1347,8 +2392,23 @@ function BikeScene({
         controls.target.copy(look);
         controls.update();
         frameMorphMeshesRef.current = collectFrameMorphMeshes(group);
+        bodyFramePaintMaterialsRef.current = prepareBodyFramePaintMaterials(group);
+        handleMorphMeshesRef.current = collectHandleMorphMeshes(group);
+        seatMorphMeshesRef.current = collectSeatMorphMeshes(group);
         applyFrameSizeMorph(frameMorphMeshesRef.current, sizeRef.current);
+        applyHandlebarSizeMorph(handleMorphMeshesRef.current, handlebarSizeRef.current);
+        applySeatAdjustmentMorph(seatMorphMeshesRef.current, seatAdjustmentRef.current);
+        applyBodyFramePaintTexture(
+          bodyFramePaintMaterialsRef.current,
+          paintRef.current,
+          bodyFrameDiffuseTexturesRef.current,
+        );
         replaceBike(group);
+        syncAddonModel("groupset", componentOptionsRef.current.groupset);
+        syncAddonModel("pedals", componentOptionsRef.current.pedals);
+        syncAddonModel("wheel", componentOptionsRef.current.wheel);
+        preloadTimer = window.setTimeout(preloadAddonModels, 450);
+        onSceneReadyRef.current();
       },
       undefined,
       () => {
@@ -1358,7 +2418,12 @@ function BikeScene({
 
         fallbackRef.current = true;
         frameMorphMeshesRef.current = [];
+        bodyFramePaintMaterialsRef.current = [];
+        handleMorphMeshesRef.current = [];
+        seatMorphMeshesRef.current = [];
+        assetSourceCenterRef.current = null;
         replaceBike(buildBike(defaultConfig, "default"));
+        onSceneReadyRef.current();
       },
     );
 
@@ -1381,12 +2446,72 @@ function BikeScene({
       const activeCamera = cameraRef.current;
       const elapsed = clock.getElapsedTime();
 
-      if (controlsRef.current) {
+      if (introPhaseRef.current === "cinematic" && activeCamera) {
+        if (!introStartedRef.current) {
+          introStartedRef.current = true;
+          introStartTimeRef.current = elapsed;
+          introBaseCameraRef.current = targetCameraRef.current.clone();
+          introBaseLookRef.current = targetLookRef.current.clone();
+
+          if (controlsRef.current) {
+            controlsRef.current.enabled = false;
+          }
+        }
+
+        const baseCamera = introBaseCameraRef.current ?? targetCameraRef.current;
+        const baseLook = introBaseLookRef.current ?? targetLookRef.current;
+        const duration = 2.45;
+        const progress = THREE.MathUtils.clamp((elapsed - introStartTimeRef.current) / duration, 0, 1);
+        const eased = 1 - Math.pow(1 - progress, 3);
+        const orbitOffset = baseCamera.clone().sub(baseLook);
+        const revealAngle = THREE.MathUtils.degToRad(30 * (1 - eased));
+        const revealDistance = THREE.MathUtils.lerp(1.08, 1, eased);
+        const rotatedOffset = orbitOffset
+          .applyAxisAngle(new THREE.Vector3(0, 1, 0), revealAngle)
+          .multiplyScalar(revealDistance);
+
+        activeCamera.position.copy(baseLook).add(rotatedOffset);
+        activeCamera.position.y = THREE.MathUtils.lerp(baseCamera.y + 0.16, baseCamera.y, eased);
+        lookRef.current.copy(baseLook);
+        activeCamera.lookAt(baseLook);
+
+        if (controlsRef.current) {
+          controlsRef.current.target.copy(baseLook);
+          controlsRef.current.update();
+        }
+
+        if (progress >= 1 && !introCompletedRef.current) {
+          introCompletedRef.current = true;
+          activeCamera.position.copy(baseCamera);
+          activeCamera.lookAt(baseLook);
+          targetCameraRef.current.copy(baseCamera);
+          targetLookRef.current.copy(baseLook);
+
+          if (controlsRef.current) {
+            controlsRef.current.enabled = true;
+            controlsRef.current.target.copy(baseLook);
+            controlsRef.current.update();
+          }
+
+          onIntroCompleteRef.current();
+        }
+      } else if (controlsRef.current) {
+        controlsRef.current.enabled = true;
         controlsRef.current.update();
       } else if (activeCamera) {
         activeCamera.position.lerp(targetCameraRef.current, 0.065);
         lookRef.current.lerp(targetLookRef.current, 0.07);
         activeCamera.lookAt(lookRef.current);
+      }
+
+      if (activeCamera) {
+        updateViewerHotspots({
+          bounds: hotspotBoundsRef.current,
+          camera: activeCamera,
+          container,
+          elements: hotspotElements,
+          point: hotspotProjectionPointRef.current,
+        });
       }
 
       studioSurfaces.stageRingHighlight.rotation.z = elapsed * 0.22;
@@ -1398,13 +2523,35 @@ function BikeScene({
 
     return () => {
       cancelled = true;
+      if (preloadTimer) {
+        window.clearTimeout(preloadTimer);
+      }
       cancelAnimationFrame(frame);
       window.removeEventListener("resize", resize);
+      detachActiveAddonModels();
       if (bikeRef.current) {
         disposeObject(bikeRef.current);
       }
+      if (hdriDomeRef.current) {
+        disposeObject(hdriDomeRef.current);
+      }
+      addonModelCache.forEach((addon) => disposeObject(addon));
+      addonModelCache.clear();
+      addonModelLoadCache.clear();
+      addonRequestCounters.clear();
       disposeObject(studioSurfaces.group);
+      hdriBackgroundMapRef.current?.dispose();
+      hdriBackgroundMapRef.current = null;
+      hdriEnvironmentMapRef.current?.dispose();
+      hdriEnvironmentMapRef.current = null;
+      hdriDomeRef.current = null;
+      hdriDomeMaterialRef.current = null;
       frameMorphMeshesRef.current = [];
+      bodyFramePaintMaterialsRef.current = [];
+      Object.values(bodyFrameDiffuseTexturesRef.current).forEach((texture) => texture?.dispose());
+      bodyFrameDiffuseTexturesRef.current = {};
+      handleMorphMeshesRef.current = [];
+      seatMorphMeshesRef.current = [];
       rendererRef.current = null;
       ambientLightRef.current = null;
       keyLightRef.current = null;
@@ -1418,6 +2565,12 @@ function BikeScene({
       stageRingMaterialRef.current = null;
       stageRingHighlightMaterialRef.current = null;
       environmentMap.dispose();
+      defaultEnvironmentMapRef.current = null;
+      syncAddonModelRef.current = () => undefined;
+      addonLoaderRef.current = null;
+      assetSourceCenterRef.current = null;
+      hotspotBoundsRef.current = null;
+      hotspotElements.clear();
       controls.dispose();
       controlsRef.current = null;
       dracoLoader.dispose();
@@ -1428,9 +2581,141 @@ function BikeScene({
   }, []);
 
   useEffect(() => {
+    componentOptionsRef.current = config.components;
+  }, [config.components]);
+
+  useEffect(() => {
+    paintRef.current = config.paint;
+    const didApply = applyBodyFramePaintTexture(
+      bodyFramePaintMaterialsRef.current,
+      config.paint,
+      bodyFrameDiffuseTexturesRef.current,
+    );
+
+    if (didApply) {
+      applyModelAmbientOcclusion(modelMaterialsRef.current, viewerSettingsRef.current.modelAoIntensity);
+    }
+  }, [config.paint]);
+
+  useEffect(() => {
     sizeRef.current = config.size;
     applyFrameSizeMorph(frameMorphMeshesRef.current, config.size);
+    refreshHotspotBounds();
   }, [config.size]);
+
+  useEffect(() => {
+    handlebarSizeRef.current = config.components.cockpit;
+    applyHandlebarSizeMorph(handleMorphMeshesRef.current, config.components.cockpit);
+    refreshHotspotBounds();
+  }, [config.components.cockpit]);
+
+  useEffect(() => {
+    seatAdjustmentRef.current = config.components.seatAdjustment;
+    applySeatAdjustmentMorph(seatMorphMeshesRef.current, config.components.seatAdjustment);
+    refreshHotspotBounds();
+  }, [config.components.seatAdjustment]);
+
+  useEffect(() => {
+    syncAddonModelRef.current("wheel", config.components.wheel);
+  }, [config.components.wheel]);
+
+  useEffect(() => {
+    syncAddonModelRef.current("groupset", config.components.groupset);
+  }, [config.components.groupset]);
+
+  useEffect(() => {
+    syncAddonModelRef.current("pedals", config.components.pedals);
+  }, [config.components.pedals]);
+
+  useEffect(() => {
+    const scene = sceneRef.current;
+    const renderer = rendererRef.current;
+
+    if (!scene || !renderer) {
+      return undefined;
+    }
+
+    let cancelled = false;
+
+    const disposeUploadedHdri = () => {
+      hdriBackgroundMapRef.current?.dispose();
+      hdriBackgroundMapRef.current = null;
+      hdriEnvironmentMapRef.current?.dispose();
+      hdriEnvironmentMapRef.current = null;
+
+      if (hdriDomeMaterialRef.current) {
+        hdriDomeMaterialRef.current.uniforms.hdriMap.value = null;
+      }
+    };
+
+    const refreshEnvironment = () => {
+      applyViewerEnvironment({
+        backdropMaterial: backdropMaterialRef.current,
+        defaultEnvironmentMap: defaultEnvironmentMapRef.current,
+        hdriBackgroundMap: hdriBackgroundMapRef.current,
+        hdriDome: hdriDomeRef.current,
+        hdriDomeMaterial: hdriDomeMaterialRef.current,
+        hdriEnvironmentMap: hdriEnvironmentMapRef.current,
+        scene,
+        viewerSettings: viewerSettingsRef.current,
+      });
+    };
+
+    if (!hdriAsset) {
+      disposeUploadedHdri();
+      refreshEnvironment();
+      return undefined;
+    }
+
+    const applyLoadedHdriTexture = (sourceTexture: THREE.Texture) => {
+      if (cancelled) {
+        sourceTexture.dispose();
+        return;
+      }
+
+      if (hdriAsset.kind === "image") {
+        sourceTexture.colorSpace = THREE.SRGBColorSpace;
+      }
+
+      sourceTexture.mapping = THREE.EquirectangularReflectionMapping;
+      sourceTexture.needsUpdate = true;
+
+      const pmremGenerator = new THREE.PMREMGenerator(renderer);
+      const hdriEnvironmentMap = pmremGenerator.fromEquirectangular(sourceTexture).texture;
+      pmremGenerator.dispose();
+
+      const hdriBackgroundMap = sourceTexture;
+
+      disposeUploadedHdri();
+
+      hdriBackgroundMapRef.current = hdriBackgroundMap;
+      hdriEnvironmentMapRef.current = hdriEnvironmentMap;
+
+      if (hdriDomeMaterialRef.current) {
+        hdriDomeMaterialRef.current.uniforms.hdriMap.value = hdriBackgroundMap;
+      }
+
+      refreshEnvironment();
+    };
+
+    const handleLoadError = () => {
+      if (!cancelled) {
+        refreshEnvironment();
+      }
+    };
+
+    if (hdriAsset.kind === "hdr") {
+      new RGBELoader().load(hdriAsset.url, applyLoadedHdriTexture, undefined, handleLoadError);
+    } else if (hdriAsset.kind === "exr") {
+      new EXRLoader().load(hdriAsset.url, applyLoadedHdriTexture, undefined, handleLoadError);
+    } else {
+      new THREE.TextureLoader().load(hdriAsset.url, applyLoadedHdriTexture, undefined, handleLoadError);
+    }
+
+    return () => {
+      cancelled = true;
+    };
+  }, [hdriAsset]);
 
   useEffect(() => {
     viewerSettingsRef.current = viewerSettings;
@@ -1452,15 +2737,18 @@ function BikeScene({
     }
 
     const scene = sceneRef.current;
-    const environmentColor = new THREE.Color(viewerSettings.environmentColor);
+    let environmentColor = new THREE.Color(viewerSettings.environmentColor);
     if (scene) {
-      scene.environmentIntensity = viewerSettings.environmentIntensity;
-      scene.environmentRotation.y = THREE.MathUtils.degToRad(viewerSettings.environmentRotation);
-      scene.background = getTintedColor("#050505", viewerSettings.environmentColor, 0.055);
-
-      if (scene.fog instanceof THREE.Fog) {
-        scene.fog.color.copy(getTintedColor("#050505", viewerSettings.environmentColor, 0.12));
-      }
+      environmentColor = applyViewerEnvironment({
+        backdropMaterial: backdropMaterialRef.current,
+        defaultEnvironmentMap: defaultEnvironmentMapRef.current,
+        hdriBackgroundMap: hdriBackgroundMapRef.current,
+        hdriDome: hdriDomeRef.current,
+        hdriDomeMaterial: hdriDomeMaterialRef.current,
+        hdriEnvironmentMap: hdriEnvironmentMapRef.current,
+        scene,
+        viewerSettings,
+      });
     }
 
     if (ambientLightRef.current) {
@@ -1501,11 +2789,6 @@ function BikeScene({
       contactAoMaterialRef.current.opacity = viewerSettings.aoIntensity;
     }
 
-    if (backdropMaterialRef.current) {
-      backdropMaterialRef.current.color.copy(getTintedColor("#ffffff", viewerSettings.environmentColor, 0.16));
-      backdropMaterialRef.current.opacity = viewerSettings.backdropGlow;
-    }
-
     if (stageRingMaterialRef.current) {
       stageRingMaterialRef.current.color.copy(environmentColor);
     }
@@ -1534,6 +2817,7 @@ function BikeScene({
     const bike = buildBike(config, focus);
     bikeRef.current = bike;
     scene.add(bike);
+    refreshHotspotBounds();
   }, [config, focus]);
 
   useEffect(() => {
@@ -1567,7 +2851,44 @@ function BikeScene({
   }, [focus]);
 
   return (
-    <div className="bike-stage" ref={containerRef} />
+    <div className="bike-stage" ref={containerRef}>
+      <div
+        aria-hidden={!showHotspots}
+        aria-label="Model hotspots"
+        className="viewer-hotspots"
+        hidden={!showHotspots}
+      >
+        {viewerHotspots.map((hotspot) => (
+          <div
+            aria-label={
+              hotspot.description
+                ? `${hotspot.label}: ${hotspot.description}`
+                : hotspot.label
+            }
+            className={`viewer-hotspot ${hotspot.id}-hotspot`}
+            key={hotspot.id}
+            ref={(element) => {
+              if (element) {
+                hotspotElementsRef.current.set(hotspot.id, element);
+              } else {
+                hotspotElementsRef.current.delete(hotspot.id);
+              }
+            }}
+            tabIndex={hotspot.description ? 0 : -1}
+            title={hotspot.description}
+          >
+            <span className="viewer-hotspot-dot" />
+            <span className="viewer-hotspot-label">{hotspot.label}</span>
+            {hotspot.description ? (
+              <span className="viewer-hotspot-card">
+                <strong>{hotspot.label}</strong>
+                <span>{hotspot.description}</span>
+              </span>
+            ) : null}
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -1576,7 +2897,55 @@ export default function ConfiguratorClient() {
   const [config, setConfig] = useState<ConfigState>(defaultConfig);
   const [editingGroup, setEditingGroup] = useState<ComponentKey | null>(null);
   const [status, setStatus] = useState("");
+  const [hdriAsset, setHdriAsset] = useState<HdriAsset | null>(null);
+  const [hasUploadedHdri, setHasUploadedHdri] = useState(false);
+  const [showHotspots, setShowHotspots] = useState(false);
+  const [introPhase, setIntroPhase] = useState<IntroPhase>("loading");
+  const [loaderProgress, setLoaderProgress] = useState(0);
+  const [sceneReady, setSceneReady] = useState(false);
+  const hdriObjectUrlRef = useRef<string | null>(null);
   const [viewerSettings, setViewerSettings] = useState<ViewerSettings>(defaultViewerSettings);
+
+  useEffect(() => {
+    if (introPhase !== "loading") {
+      return undefined;
+    }
+
+    let frame = 0;
+    const start = performance.now();
+    const duration = 1800;
+
+    const tick = (time: number) => {
+      const progress = Math.min(100, Math.round(((time - start) / duration) * 100));
+      setLoaderProgress(progress);
+
+      if (progress < 100) {
+        frame = requestAnimationFrame(tick);
+      }
+    };
+
+    frame = requestAnimationFrame(tick);
+
+    return () => cancelAnimationFrame(frame);
+  }, [introPhase]);
+
+  useEffect(() => {
+    if (introPhase !== "loading" || !sceneReady || loaderProgress < 100) {
+      return undefined;
+    }
+
+    const timer = window.setTimeout(() => setIntroPhase("cinematic"), 260);
+
+    return () => window.clearTimeout(timer);
+  }, [introPhase, loaderProgress, sceneReady]);
+
+  useEffect(() => {
+    return () => {
+      if (hdriObjectUrlRef.current) {
+        URL.revokeObjectURL(hdriObjectUrlRef.current);
+      }
+    };
+  }, []);
 
   const paint = getPaint(config.paint);
   const total = useMemo(() => {
@@ -1595,6 +2964,9 @@ export default function ConfiguratorClient() {
         : activeStep === "studio"
           ? "studio"
           : "build";
+  const stageTabStyle = {
+    "--active-tab-offset": stageTabOffsets[activeStage],
+  } as CSSProperties;
   const focus =
     activeStep === "components"
       ? getFocusForGroup(editingGroup)
@@ -1604,22 +2976,35 @@ export default function ConfiguratorClient() {
           ? "default"
           : "default";
 
+  const visibleComponentOrder: ComponentKey[] = [
+    "cockpit",
+    "seatAdjustment",
+    "wheel",
+    "groupset",
+    "pedals",
+    "storage",
+  ];
+
   const summaryRows = [
     ["Model", modelName],
     ["Graphic", paint.name],
     ["Finish", paint.finish],
     ["Size", getSizeLabel(config.size)],
-    ...componentGroups.map((group) => [
-      group.label,
-      getComponent(group, config.components[group.key]).name,
-    ]),
+    ...visibleComponentOrder
+      .map((groupKey) => getComponentGroup(groupKey))
+      .map((group) => [
+        group.label,
+        getComponent(group, config.components[group.key]).name,
+      ]),
   ];
 
   const configSeed = JSON.stringify(config);
+  const buildComponentOrder = visibleComponentOrder;
 
   const buildCards = [
     {
       id: "frame",
+      icon: getComponentIconKey("frame"),
       label: "Frame",
       value: getSizeLabel(config.size),
       meta: `${modelName} Disc`,
@@ -1629,17 +3014,18 @@ export default function ConfiguratorClient() {
         setActiveStep("size");
       },
     },
-    ...componentGroups
-      .filter((group) => ["groupset", "wheel", "cockpit", "saddle"].includes(group.key))
+    ...buildComponentOrder
+      .map((groupKey) => getComponentGroup(groupKey))
       .map((group) => {
         const selected = getComponent(group, config.components[group.key]);
 
         return {
           id: group.key,
+          icon: getComponentIconKey(group.key),
           label: group.label === "Wheel" ? "Wheels" : group.label,
           value: selected.name,
           meta: selected.priceDelta ? `+${formatter.format(selected.priceDelta)}` : "Included",
-          thumb: group.key,
+          thumb: group.key === "seatAdjustment" ? "saddle" : group.key,
           onClick: () => {
             setActiveStep("components");
             setEditingGroup(group.key);
@@ -1647,7 +3033,6 @@ export default function ConfiguratorClient() {
         };
       }),
   ];
-
   const updateComponent = (group: ComponentGroup, optionId: string) => {
     setConfig((current) => ({
       ...current,
@@ -1656,19 +3041,6 @@ export default function ConfiguratorClient() {
         [group.key]: optionId,
       },
     }));
-
-    if (group.key === "groupset" && optionId === "sram-force-axs") {
-      setConfig((current) => ({
-        ...current,
-        components: {
-          ...current.components,
-          crankset:
-            current.components.crankset === "power-meter"
-              ? current.components.crankset
-              : "semi-compact-52-36",
-        },
-      }));
-    }
   };
 
   const updateViewerNumber = (key: NumericViewerSettingKey, value: number) => {
@@ -1699,6 +3071,56 @@ export default function ConfiguratorClient() {
     }));
   };
 
+  const applyHdriPreset = (preset: HdriPreset) => {
+    if (hdriObjectUrlRef.current) {
+      URL.revokeObjectURL(hdriObjectUrlRef.current);
+      hdriObjectUrlRef.current = null;
+    }
+
+    setHdriAsset({
+      kind: preset.kind,
+      name: preset.name,
+      url: preset.url,
+    });
+    setHasUploadedHdri(false);
+    setViewerSettings((current) => ({
+      ...current,
+      ...preset.settings,
+    }));
+    setStatus("");
+  };
+
+  const restoreDefaultHdriAsset = () => {
+    applyHdriPreset(hdriPresets[0]);
+  };
+
+  const disableHdriAsset = () => {
+    if (hdriObjectUrlRef.current) {
+      URL.revokeObjectURL(hdriObjectUrlRef.current);
+      hdriObjectUrlRef.current = null;
+    }
+
+    setHdriAsset(null);
+    setHasUploadedHdri(false);
+    setStatus("HDRI disabled. Default studio background restored.");
+  };
+
+  const uploadHdriAsset = (file: File) => {
+    if (hdriObjectUrlRef.current) {
+      URL.revokeObjectURL(hdriObjectUrlRef.current);
+    }
+
+    const url = URL.createObjectURL(file);
+    hdriObjectUrlRef.current = url;
+    setHdriAsset({
+      kind: getHdriAssetKind(file.name),
+      name: file.name,
+      url,
+    });
+    setHasUploadedHdri(true);
+    setStatus(`HDRI loaded: ${file.name}`);
+  };
+
   const nextStep = () => {
     if (editingGroup) {
       setEditingGroup(null);
@@ -1706,7 +3128,7 @@ export default function ConfiguratorClient() {
     }
 
     if (activeStep === "summary") {
-      setStatus("Cart payload ready for Fynd Commerce.");
+      setStatus("");
       return;
     }
 
@@ -1742,31 +3164,6 @@ export default function ConfiguratorClient() {
     }
   };
 
-  const openRailItem = (id: string) => {
-    setStatus("");
-
-    if (id === "paint") {
-      setEditingGroup(null);
-      setActiveStep("graphic");
-      return;
-    }
-
-    if (id === "frame") {
-      setEditingGroup(null);
-      setActiveStep("size");
-      return;
-    }
-
-    if (id === "components") {
-      setEditingGroup(null);
-      setActiveStep("components");
-      return;
-    }
-
-    setActiveStep("components");
-    setEditingGroup(id as ComponentKey);
-  };
-
   const setStage = (stage: StageId) => {
     setEditingGroup(null);
     setStatus("");
@@ -1795,12 +3192,27 @@ export default function ConfiguratorClient() {
     setStatus(`Saved configuration ${encoded.slice(0, 12)}.`);
   };
 
-  return (
-    <main className="configurator-shell">
-      <section className="studio-area" aria-label="3D cycle preview">
-        <BikeScene config={config} focus={focus} viewerSettings={viewerSettings} />
+  const activeHdriPreset = !hasUploadedHdri && hdriAsset
+    ? hdriPresets.find((preset) => preset.url === hdriAsset.url)
+    : null;
+  const isDefaultHdriActive = activeHdriPreset?.id === defaultHdriAsset.id;
+  const isHdriDisabled = !hdriAsset;
 
-        <header className="brand-block">
+  return (
+    <main className={`configurator-shell intro-${introPhase}`} aria-busy={introPhase !== "ready"}>
+      <section className="studio-area" aria-label="3D cycle preview">
+        <BikeScene
+          config={config}
+          focus={focus}
+          hdriAsset={hdriAsset}
+          introPhase={introPhase}
+          onIntroComplete={() => setIntroPhase("ready")}
+          onSceneReady={() => setSceneReady(true)}
+          showHotspots={showHotspots}
+          viewerSettings={viewerSettings}
+        />
+
+        <header className="brand-block" aria-hidden={introPhase !== "ready"}>
           <div className="brand-wordmark glamar-wordmark" aria-label="Fynd GlamAR">
             {/* Static GitHub Pages build cannot use next/image here. */}
             {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -1808,52 +3220,19 @@ export default function ConfiguratorClient() {
           </div>
         </header>
 
-        <nav className="side-rail" aria-label="Build categories">
-          {railItems.map((item) => {
-            const active =
-              (item.id === "paint" && activeStep === "graphic") ||
-              (item.id === "frame" && activeStep === "size") ||
-              item.id === editingGroup ||
-              (item.id === "components" && activeStep === "components" && !editingGroup);
-
-            return (
-              <button
-                className={active ? "active" : ""}
-                key={item.id}
-                onClick={() => openRailItem(item.id)}
-                type="button"
-              >
-                <span className={`rail-icon ${item.id}-icon`}>
-                  {item.id === "frame" && (
-                    <svg aria-hidden="true" focusable="false" viewBox="0 0 24 24">
-                      <path d="M4.5 17.5h6.2l5.4-9H8.2L4.5 17.5Z" />
-                      <path d="M8.2 8.5l2.5 9 5.4-9 3.4 9h-8.8" />
-                      <circle cx="10.7" cy="17.5" r="1.35" />
-                    </svg>
-                  )}
-                </span>
-                <small>{item.label}</small>
-              </button>
-            );
-          })}
-        </nav>
-
-        <div className="help-card">
+        <div className="help-card" aria-hidden={introPhase !== "ready"}>
           <span className="help-icon" />
           <strong>Need Help?</strong>
           <small>Chat with an expert</small>
         </div>
       </section>
 
-      <aside className="control-panel" aria-label="Ribble cycle configurator">
+      <aside className="control-panel" aria-hidden={introPhase !== "ready"} aria-label="Ribble cycle configurator">
         <header className="panel-header">
           <span>{modelName}</span>
-          <button type="button" aria-label="Select model">
-            v
-          </button>
         </header>
 
-        <nav className="stage-tabs" aria-label="Configuration stages">
+        <nav className="stage-tabs" aria-label="Configuration stages" style={stageTabStyle}>
           <button
             className={activeStage === "build" ? "active" : ""}
             onClick={() => setStage("build")}
@@ -1887,6 +3266,15 @@ export default function ConfiguratorClient() {
         <div className="panel-body">
           {activeStage === "build" && !editingGroup && activeStep !== "size" && (
             <section className="build-list" aria-label="Build selections">
+              <button
+                aria-pressed={showHotspots}
+                className={`hotspot-toggle ${showHotspots ? "active" : ""}`}
+                onClick={() => setShowHotspots((current) => !current)}
+                type="button"
+              >
+                <span className="hotspot-toggle-dot" />
+                {showHotspots ? "Hide Hotspots" : "Show Hotspots"}
+              </button>
               {buildCards.map((card) => (
                 <button
                   className="build-card"
@@ -1894,7 +3282,9 @@ export default function ConfiguratorClient() {
                   onClick={card.onClick}
                   type="button"
                 >
-                  <span className={`part-thumb ${card.thumb}-thumb`} />
+                  <span className={`part-thumb ${card.thumb}-thumb`}>
+                    <PartIcon kind={card.icon} />
+                  </span>
                   <span>
                     <strong>{card.label}</strong>
                     <small>{card.value}</small>
@@ -1904,26 +3294,6 @@ export default function ConfiguratorClient() {
                 </button>
               ))}
 
-              <article className="paint-card">
-                <div>
-                  <strong>Paint & Decals</strong>
-                  <small>{paint.name}</small>
-                </div>
-                <div className="compact-swatches">
-                  {paintOptions.map((option) => (
-                    <button
-                      aria-label={option.name}
-                      className={config.paint === option.id ? "selected" : ""}
-                      key={option.id}
-                      onClick={() => setConfig((current) => ({ ...current, paint: option.id }))}
-                      style={{
-                        background: `linear-gradient(135deg, ${option.frame} 0 48%, ${option.accent} 48% 64%, ${option.decal} 64%)`,
-                      }}
-                      type="button"
-                    />
-                  ))}
-                </div>
-              </article>
             </section>
           )}
 
@@ -1941,11 +3311,15 @@ export default function ConfiguratorClient() {
                     key={option.id}
                     onClick={() => setConfig((current) => ({ ...current, paint: option.id }))}
                     style={{
-                      background: `linear-gradient(135deg, ${option.frame} 0 48%, ${option.accent} 48% 64%, ${option.decal} 64%)`,
-                    }}
+                      "--paint-accent": option.accent,
+                      "--paint-decal": option.decal,
+                      "--paint-frame": option.frame,
+                    } as CSSProperties}
                     title={option.name}
                     type="button"
-                  />
+                  >
+                    <span className="paint-swatch-preview" />
+                  </button>
                 ))}
               </div>
               <div className="detail-strip">
@@ -1978,29 +3352,6 @@ export default function ConfiguratorClient() {
             </section>
           )}
 
-          {activeStep === "components" && !editingGroup && (
-            <section className="component-list" aria-label="Component groups">
-              {componentGroups.map((group) => {
-                const selected = getComponent(group, config.components[group.key]);
-
-                return (
-                  <button
-                    className="component-row"
-                    key={group.key}
-                    onClick={() => setEditingGroup(group.key)}
-                    type="button"
-                  >
-                    <span>
-                      <strong>{group.label}</strong>
-                      <small>{selected.name}</small>
-                    </span>
-                    <em>{selected.priceDelta ? `+${formatter.format(selected.priceDelta)}` : "Included"}</em>
-                  </button>
-                );
-              })}
-            </section>
-          )}
-
           {activeStep === "components" && editingGroup && (
             <section className="step-content" aria-label="Component options">
               {(() => {
@@ -2028,7 +3379,7 @@ export default function ConfiguratorClient() {
                           type="button"
                         >
                           <span className="option-thumb">
-                            <i />
+                            <PartIcon kind={getComponentIconKey(group.key)} />
                           </span>
                           <span>
                             <strong>{option.name}</strong>
@@ -2086,6 +3437,101 @@ export default function ConfiguratorClient() {
               </div>
 
               <div className="studio-group">
+                <p>HDRI Dome</p>
+                <div className="studio-hdri-presets" aria-label="Preset HDRI domes">
+                  <span>Preset HDRI</span>
+                  <div className="studio-hdri-preset-row">
+                    {hdriPresets.map((preset) => {
+                      const isActivePreset = activeHdriPreset?.id === preset.id;
+
+                      return (
+                        <button
+                          aria-label={`${preset.label} HDRI preset. Intensity ${preset.settings.hdriIntensity.toFixed(2)}, scale ${preset.settings.hdriScale.toFixed(2)}, rotation ${preset.settings.hdriRotation} degrees`}
+                          aria-pressed={isActivePreset}
+                          className={isActivePreset ? "studio-hdri-preset active" : "studio-hdri-preset"}
+                          key={preset.id}
+                          onClick={() => applyHdriPreset(preset)}
+                          style={{ "--preset-swatch": preset.swatch } as CSSProperties}
+                          title={`${preset.label}: ${preset.settings.hdriIntensity.toFixed(2)} intensity, ${preset.settings.hdriScale.toFixed(2)}x scale, ${preset.settings.hdriRotation} deg`}
+                          type="button"
+                        >
+                          <span aria-hidden="true" />
+                          <em>{preset.label}</em>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+                <StudioColorPalette
+                  onChange={updateViewerColor}
+                  value={viewerSettings.environmentColor}
+                />
+                <div className="studio-upload-control">
+                  <span>
+                    <em>HDRI File</em>
+                    <strong>{hdriAsset?.name ?? "None"}</strong>
+                  </span>
+                  <div className="studio-upload-actions">
+                    <label>
+                      Upload HDRI
+                      <input
+                        accept=".hdr,.exr,image/jpeg,image/png,image/webp"
+                        onChange={(event) => {
+                          const file = event.currentTarget.files?.[0];
+
+                          if (file) {
+                            uploadHdriAsset(file);
+                            event.currentTarget.value = "";
+                          }
+                        }}
+                        type="file"
+                      />
+                    </label>
+                    <button
+                      disabled={isDefaultHdriActive}
+                      onClick={restoreDefaultHdriAsset}
+                      type="button"
+                    >
+                      Restore Default
+                    </button>
+                    <button
+                      disabled={isHdriDisabled}
+                      onClick={disableHdriAsset}
+                      type="button"
+                    >
+                      None
+                    </button>
+                  </div>
+                </div>
+                <StudioRange
+                  label="HDRI Intensity"
+                  max={4}
+                  min={0}
+                  onChange={(value) => updateViewerNumber("hdriIntensity", value)}
+                  step={0.01}
+                  value={viewerSettings.hdriIntensity}
+                />
+                <StudioRange
+                  label="HDRI Scale"
+                  max={2.5}
+                  min={0.5}
+                  onChange={(value) => updateViewerNumber("hdriScale", value)}
+                  step={0.01}
+                  suffix="x"
+                  value={viewerSettings.hdriScale}
+                />
+                <StudioRange
+                  label="HDRI Rotation"
+                  max={180}
+                  min={-180}
+                  onChange={(value) => updateViewerNumber("hdriRotation", value)}
+                  step={1}
+                  suffix=" deg"
+                  value={viewerSettings.hdriRotation}
+                />
+              </div>
+
+              <div className="studio-group">
                 <p>Environment</p>
                 <StudioRange
                   label="Exposure"
@@ -2119,10 +3565,6 @@ export default function ConfiguratorClient() {
                   onChange={(value) => updateViewerNumber("environmentContrast", value)}
                   step={0.01}
                   value={viewerSettings.environmentContrast}
-                />
-                <StudioColorPalette
-                  onChange={updateViewerColor}
-                  value={viewerSettings.environmentColor}
                 />
                 <StudioRange
                   label="Ambient Light"
@@ -2176,14 +3618,6 @@ export default function ConfiguratorClient() {
                   onChange={(value) => updateViewerNumber("vsmBlurSamples", value)}
                   step={1}
                   value={viewerSettings.vsmBlurSamples}
-                />
-                <StudioRange
-                  label="AO"
-                  max={1}
-                  min={0}
-                  onChange={(value) => updateViewerNumber("aoIntensity", value)}
-                  step={0.01}
-                  value={viewerSettings.aoIntensity}
                 />
                 <StudioRange
                   label="Model AO"
@@ -2250,7 +3684,7 @@ export default function ConfiguratorClient() {
                   ? "Done"
                   : editingGroup
                     ? "Confirm"
-                    : "Next ->"}
+                    : "Next"}
             </button>
           </div>
         </footer>
@@ -2264,6 +3698,23 @@ export default function ConfiguratorClient() {
         </div>
         {status && <p className="status-line">{status}</p>}
       </aside>
+
+      {introPhase === "loading" ? (
+        <div className="experience-loader" role="status" aria-live="polite">
+          <div className="loader-mark">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={publicAsset("fynd-glamar-logo.svg")} alt="Fynd GlamAR" width={214} height={36} />
+          </div>
+          <div className="loader-ring" aria-hidden="true" />
+          <div className="loader-copy">
+            <span>Loading configurator</span>
+            <strong>{loaderProgress}%</strong>
+          </div>
+          <div className="loader-track" aria-hidden="true">
+            <span style={{ width: `${loaderProgress}%` }} />
+          </div>
+        </div>
+      ) : null}
 
     </main>
   );
