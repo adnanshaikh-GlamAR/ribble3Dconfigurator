@@ -594,7 +594,7 @@ const modelAssets = {
     id: "mavicCosmicSl45",
     path: "models/wheels/mavic-cosmic-sl-45.glb",
     preload: true,
-    sourceGroundY: -5.9946,
+    sourceGroundY: -2.2691,
   },
   vittoriaRubino32Mm: {
     id: "vittoriaRubino32Mm",
