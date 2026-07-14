@@ -25,6 +25,7 @@ type ComponentKey =
 type ComponentIconKey = "frame" | "wheel" | "groupset" | "cockpit" | "pedals" | "saddle" | "storage";
 type ToneMappingKey = "none" | "linear" | "reinhard" | "cineon" | "aces" | "agx" | "neutral";
 type HdriAssetKind = "exr" | "hdr" | "image";
+type BackgroundMode = "color" | "hdri";
 
 type PaintOption = {
   id: string;
@@ -143,6 +144,7 @@ type HdriDomeMaterial = THREE.ShaderMaterial & {
 
 type ModelAssetId =
   | "baseFrame"
+  | "bottle01"
   | "duraAce105Di2"
   | "keoClassic3"
   | "vittoriaRubino32Mm"
@@ -258,7 +260,7 @@ const defaultViewerSettings: ViewerSettings = {
   aoIntensity: 0,
   backdropGlow: 0,
   cameraFov: 35,
-  environmentColor: "#d3e5f8",
+  environmentColor: "#ddd9d3",
   environmentContrast: 1.08,
   environmentIntensity: 1.06,
   environmentRotation: 22,
@@ -423,13 +425,20 @@ const componentGroups: ComponentGroup[] = [
   },
   {
     key: "storage",
-    label: "Storage",
+    label: "Bottle & Cage",
     focus: "drivetrain",
     options: [
       {
         id: "bottle-cage",
-        name: "Bottle Cage",
-        subtitle: "Integrated downtube storage",
+        name: "AERO BOTTLE CAGE BUNDLE",
+        subtitle: "Cage Bundle",
+        priceDelta: 0,
+        visual: {},
+      },
+      {
+        id: "water-bottle-500ml",
+        name: "Water Bottle 500 ML",
+        subtitle: "Bottle and cage add-on",
         priceDelta: 0,
         visual: {},
       },
@@ -580,6 +589,11 @@ const modelAssets = {
     id: "baseFrame",
     path: "models/base/frame.glb",
   },
+  bottle01: {
+    id: "bottle01",
+    path: "models/storage/bottle-01.glb",
+    preload: true,
+  },
   duraAce105Di2: {
     id: "duraAce105Di2",
     path: "models/groupset/dura-ace-105-di2.glb",
@@ -617,14 +631,19 @@ const componentAddonAssets: Partial<Record<ComponentKey, Partial<Record<string, 
   pedals: {
     "keo-classic-3": modelAssets.keoClassic3,
   },
+  storage: {
+    "water-bottle-500ml": modelAssets.bottle01,
+  },
   wheel: {
     "level-db40": modelAssets.vittoriaRubino32Mm,
     "mavic-cosmic": modelAssets.mavicCosmicSl45,
     "zipp-404": modelAssets.zipp303SwCarbon,
   },
 };
-const startupCameraDistance = 3.7;
-const startupCameraX = 0.48;
+const startupCameraDistance = 4.85;
+const startupCameraX = 1.02;
+const startupCameraHeightOffset = 0.48;
+const startupLookHeightOffset = 0.02;
 // Authored GLB wheel-contact height. Keep the studio floor fixed and move assets to this line.
 const bikeSourceGroundY = -2.28;
 const modelGroundY = -0.82;
@@ -1192,6 +1211,7 @@ function createHdriDomeMaterial(settings: ViewerSettings): HdriDomeMaterial {
 }
 
 function applyViewerEnvironment({
+  backgroundMode,
   backdropMaterial,
   hdriBackgroundMap,
   defaultEnvironmentMap,
@@ -1201,6 +1221,7 @@ function applyViewerEnvironment({
   scene,
   viewerSettings,
 }: {
+  backgroundMode: BackgroundMode;
   backdropMaterial: THREE.MeshBasicMaterial | null;
   defaultEnvironmentMap: THREE.Texture | null;
   hdriBackgroundMap: THREE.Texture | null;
@@ -1210,10 +1231,11 @@ function applyViewerEnvironment({
   scene: THREE.Scene;
   viewerSettings: ViewerSettings;
 }) {
-  const hasHdri = Boolean(hdriBackgroundMap && hdriEnvironmentMap);
+  const hasHdri = backgroundMode === "hdri" && Boolean(hdriBackgroundMap && hdriEnvironmentMap);
   const environmentColor = new THREE.Color(viewerSettings.environmentColor);
+  const activeEnvironmentColor = hasHdri ? new THREE.Color("#ffffff") : environmentColor;
 
-  scene.environment = hdriEnvironmentMap ?? defaultEnvironmentMap;
+  scene.environment = hasHdri ? hdriEnvironmentMap : defaultEnvironmentMap;
   scene.environmentIntensity = hasHdri
     ? viewerSettings.hdriIntensity
     : viewerSettings.environmentIntensity;
@@ -1226,15 +1248,22 @@ function applyViewerEnvironment({
     scene.backgroundIntensity = 1;
     scene.backgroundRotation.y = 0;
     scene.backgroundBlurriness = 0;
+    scene.fog = null;
   } else {
-    scene.background = getTintedColor("#050505", viewerSettings.environmentColor, 0.055);
+    scene.background = getTintedColor("#f4f1ea", viewerSettings.environmentColor, 0.62);
     scene.backgroundIntensity = 1;
     scene.backgroundRotation.y = 0;
     scene.backgroundBlurriness = 0;
-  }
 
-  if (scene.fog instanceof THREE.Fog) {
-    scene.fog.color.copy(getTintedColor("#050505", viewerSettings.environmentColor, 0.12));
+    if (!(scene.fog instanceof THREE.Fog)) {
+      scene.fog = new THREE.Fog(
+        getTintedColor("#c3c7c7", viewerSettings.environmentColor, 0.38),
+        7.5,
+        16,
+      );
+    } else {
+      scene.fog.color.copy(getTintedColor("#c3c7c7", viewerSettings.environmentColor, 0.38));
+    }
   }
 
   if (hdriDome) {
@@ -1243,7 +1272,7 @@ function applyViewerEnvironment({
   }
 
   if (hdriDomeMaterial) {
-    hdriDomeMaterial.uniforms.hdriMap.value = hdriBackgroundMap;
+    hdriDomeMaterial.uniforms.hdriMap.value = hasHdri ? hdriBackgroundMap : null;
     hdriDomeMaterial.uniforms.hdriIntensity.value = Math.max(0.05, viewerSettings.hdriIntensity);
     hdriDomeMaterial.uniforms.hdriRotation.value = THREE.MathUtils.degToRad(
       viewerSettings.hdriRotation,
@@ -1252,11 +1281,11 @@ function applyViewerEnvironment({
   }
 
   if (backdropMaterial) {
-    backdropMaterial.color.copy(getTintedColor("#ffffff", viewerSettings.environmentColor, 0.16));
+    backdropMaterial.color.copy(getTintedColor("#ffffff", viewerSettings.environmentColor, 0.36));
     backdropMaterial.opacity = hasHdri ? 0 : viewerSettings.backdropGlow;
   }
 
-  return environmentColor;
+  return activeEnvironmentColor;
 }
 
 function prepareModelForViewport(model: THREE.Object3D, anisotropy = 1) {
@@ -1295,10 +1324,10 @@ function prepareViewportModel(model: THREE.Object3D, anisotropy = 1) {
   group.scale.setScalar(scale);
   group.position.y = modelGroundY - (bikeSourceGroundY - center.y) * scale;
 
-  const look = new THREE.Vector3(startupCameraX, group.position.y, 0);
+  const look = new THREE.Vector3(startupCameraX, group.position.y + startupLookHeightOffset, 0);
   const camera = new THREE.Vector3(
     startupCameraX,
-    group.position.y + Math.max(size.y * scale * 0.06, 0.12),
+    group.position.y + startupCameraHeightOffset,
     startupCameraDistance,
   );
 
@@ -1656,10 +1685,10 @@ function createStudioGradientTexture() {
 
   if (context) {
     const vertical = context.createLinearGradient(0, 0, 0, canvas.height);
-    vertical.addColorStop(0, "#070707");
-    vertical.addColorStop(0.44, "#20201d");
-    vertical.addColorStop(0.74, "#11110f");
-    vertical.addColorStop(1, "#030303");
+    vertical.addColorStop(0, "#d9d7d2");
+    vertical.addColorStop(0.44, "#c8cdcd");
+    vertical.addColorStop(0.74, "#b9c0bf");
+    vertical.addColorStop(1, "#9fa8a8");
     context.fillStyle = vertical;
     context.fillRect(0, 0, canvas.width, canvas.height);
 
@@ -1671,17 +1700,17 @@ function createStudioGradientTexture() {
       canvas.height * 0.52,
       canvas.width * 0.52,
     );
-    centerGlow.addColorStop(0, "rgba(245, 242, 235, 0.15)");
-    centerGlow.addColorStop(0.45, "rgba(222, 197, 117, 0.06)");
+    centerGlow.addColorStop(0, "rgba(255, 255, 255, 0.32)");
+    centerGlow.addColorStop(0.45, "rgba(47, 131, 200, 0.08)");
     centerGlow.addColorStop(1, "rgba(0, 0, 0, 0)");
     context.fillStyle = centerGlow;
     context.fillRect(0, 0, canvas.width, canvas.height);
 
     const edgeShade = context.createLinearGradient(0, 0, canvas.width, 0);
-    edgeShade.addColorStop(0, "rgba(0, 0, 0, 0.72)");
+    edgeShade.addColorStop(0, "rgba(16, 24, 33, 0.2)");
     edgeShade.addColorStop(0.32, "rgba(0, 0, 0, 0)");
     edgeShade.addColorStop(0.68, "rgba(0, 0, 0, 0)");
-    edgeShade.addColorStop(1, "rgba(0, 0, 0, 0.76)");
+    edgeShade.addColorStop(1, "rgba(16, 24, 33, 0.24)");
     context.fillStyle = edgeShade;
     context.fillRect(0, 0, canvas.width, canvas.height);
   }
@@ -1700,8 +1729,8 @@ function createFloorGlowTexture() {
   if (context) {
     const glow = context.createRadialGradient(256, 256, 16, 256, 256, 248);
     glow.addColorStop(0, "rgba(255, 255, 245, 0.28)");
-    glow.addColorStop(0.32, "rgba(222, 197, 117, 0.12)");
-    glow.addColorStop(0.7, "rgba(222, 197, 117, 0.035)");
+    glow.addColorStop(0.32, "rgba(47, 131, 200, 0.1)");
+    glow.addColorStop(0.7, "rgba(47, 131, 200, 0.035)");
     glow.addColorStop(1, "rgba(0, 0, 0, 0)");
     context.fillStyle = glow;
     context.fillRect(0, 0, canvas.width, canvas.height);
@@ -1754,7 +1783,7 @@ function buildStudioSurfaces(): StudioSurfaces {
 
   const floorMaterial = new THREE.MeshStandardMaterial({
     alphaMap: groundFadeTexture,
-    color: "#2d2d2a",
+    color: "#b9bfbd",
     depthWrite: false,
     metalness: 0,
     opacity: 0.68,
@@ -1944,16 +1973,18 @@ function StudioToggle({
 }
 
 function StudioColorPalette({
+  active,
   onChange,
   value,
 }: {
+  active: boolean;
   onChange: (value: string) => void;
   value: string;
 }) {
   const colorValue = /^#[0-9a-f]{6}$/i.test(value) ? value : defaultViewerSettings.environmentColor;
 
   return (
-    <div className="studio-color-control">
+    <div className={active ? "studio-color-control active" : "studio-color-control"}>
       <span>
         <em>Environment Color</em>
         <strong>{colorValue.toUpperCase()}</strong>
@@ -1961,7 +1992,7 @@ function StudioColorPalette({
       <div className="studio-background-presets" aria-label="Background color presets">
         {backgroundColorPresets.map((preset) => {
           const presetColor = preset.color.toUpperCase();
-          const isActive = colorValue.toUpperCase() === presetColor;
+          const isActive = active && colorValue.toUpperCase() === presetColor;
 
           return (
             <button
@@ -1984,6 +2015,7 @@ function StudioColorPalette({
 }
 
 function BikeScene({
+  backgroundMode,
   config,
   focus,
   hdriAsset,
@@ -1993,6 +2025,7 @@ function BikeScene({
   showHotspots,
   viewerSettings,
 }: {
+  backgroundMode: BackgroundMode;
   config: ConfigState;
   focus: string;
   hdriAsset: HdriAsset | null;
@@ -2023,6 +2056,7 @@ function BikeScene({
   const hotspotBoundsRef = useRef<THREE.Box3 | null>(null);
   const hotspotElementsRef = useRef(new Map<string, HTMLDivElement>());
   const hotspotProjectionPointRef = useRef(new THREE.Vector3());
+  const [activeHotspotId, setActiveHotspotId] = useState<string | null>(null);
   const paintRef = useRef(config.paint);
   const sizeRef = useRef(config.size);
   const handlebarSizeRef = useRef(config.components.cockpit);
@@ -2051,9 +2085,13 @@ function BikeScene({
   const assetCameraRef = useRef<{ camera: THREE.Vector3; look: THREE.Vector3 } | null>(null);
   const modelLoadedRef = useRef(false);
   const fallbackRef = useRef(false);
-  const targetCameraRef = useRef(new THREE.Vector3(startupCameraX, 1.12, startupCameraDistance));
-  const targetLookRef = useRef(new THREE.Vector3(0, 1.1, 0));
-  const lookRef = useRef(new THREE.Vector3(0, 1.1, 0));
+  const targetCameraRef = useRef(
+    new THREE.Vector3(startupCameraX, modelGroundY + startupCameraHeightOffset, startupCameraDistance),
+  );
+  const targetLookRef = useRef(
+    new THREE.Vector3(startupCameraX, modelGroundY + startupLookHeightOffset, 0),
+  );
+  const lookRef = useRef(new THREE.Vector3(startupCameraX, modelGroundY + startupLookHeightOffset, 0));
   const introPhaseRef = useRef(introPhase);
   const introStartedRef = useRef(false);
   const introCompletedRef = useRef(false);
@@ -2096,6 +2134,16 @@ function BikeScene({
   }, [onSceneReady]);
 
   useEffect(() => {
+    if (!showHotspots) {
+      const frame = window.requestAnimationFrame(() => setActiveHotspotId(null));
+
+      return () => window.cancelAnimationFrame(frame);
+    }
+
+    return undefined;
+  }, [showHotspots]);
+
+  useEffect(() => {
     const container = containerRef.current;
     if (!container) {
       return undefined;
@@ -2106,13 +2154,17 @@ function BikeScene({
     const addonRequestCounters = addonRequestCountersRef.current;
     const hotspotElements = hotspotElementsRef.current;
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color("#050505");
-    scene.fog = new THREE.Fog("#050505", 7.5, 16);
+    scene.background = getTintedColor("#f4f1ea", viewerSettingsRef.current.environmentColor, 0.62);
+    scene.fog = new THREE.Fog(
+      getTintedColor("#c3c7c7", viewerSettingsRef.current.environmentColor, 0.38),
+      7.5,
+      16,
+    );
     sceneRef.current = scene;
 
     const initialSettings = viewerSettingsRef.current;
     const camera = new THREE.PerspectiveCamera(initialSettings.cameraFov, 1, 0.1, 100);
-    camera.position.set(startupCameraX, 1.12, startupCameraDistance);
+    camera.position.set(startupCameraX, modelGroundY + startupCameraHeightOffset, startupCameraDistance);
     cameraRef.current = camera;
 
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
@@ -2406,6 +2458,7 @@ function BikeScene({
         replaceBike(group);
         syncAddonModel("groupset", componentOptionsRef.current.groupset);
         syncAddonModel("pedals", componentOptionsRef.current.pedals);
+        syncAddonModel("storage", componentOptionsRef.current.storage);
         syncAddonModel("wheel", componentOptionsRef.current.wheel);
         preloadTimer = window.setTimeout(preloadAddonModels, 450);
         onSceneReadyRef.current();
@@ -2460,7 +2513,7 @@ function BikeScene({
 
         const baseCamera = introBaseCameraRef.current ?? targetCameraRef.current;
         const baseLook = introBaseLookRef.current ?? targetLookRef.current;
-        const duration = 2.45;
+        const duration = 0.85;
         const progress = THREE.MathUtils.clamp((elapsed - introStartTimeRef.current) / duration, 0, 1);
         const eased = 1 - Math.pow(1 - progress, 3);
         const orbitOffset = baseCamera.clone().sub(baseLook);
@@ -2628,6 +2681,10 @@ function BikeScene({
   }, [config.components.pedals]);
 
   useEffect(() => {
+    syncAddonModelRef.current("storage", config.components.storage);
+  }, [config.components.storage]);
+
+  useEffect(() => {
     const scene = sceneRef.current;
     const renderer = rendererRef.current;
 
@@ -2650,6 +2707,7 @@ function BikeScene({
 
     const refreshEnvironment = () => {
       applyViewerEnvironment({
+        backgroundMode,
         backdropMaterial: backdropMaterialRef.current,
         defaultEnvironmentMap: defaultEnvironmentMapRef.current,
         hdriBackgroundMap: hdriBackgroundMapRef.current,
@@ -2715,7 +2773,7 @@ function BikeScene({
     return () => {
       cancelled = true;
     };
-  }, [hdriAsset]);
+  }, [backgroundMode, hdriAsset]);
 
   useEffect(() => {
     viewerSettingsRef.current = viewerSettings;
@@ -2740,6 +2798,7 @@ function BikeScene({
     let environmentColor = new THREE.Color(viewerSettings.environmentColor);
     if (scene) {
       environmentColor = applyViewerEnvironment({
+        backgroundMode,
         backdropMaterial: backdropMaterialRef.current,
         defaultEnvironmentMap: defaultEnvironmentMapRef.current,
         hdriBackgroundMap: hdriBackgroundMapRef.current,
@@ -2752,7 +2811,9 @@ function BikeScene({
     }
 
     if (ambientLightRef.current) {
-      ambientLightRef.current.color.copy(getTintedColor("#f7f1e4", viewerSettings.environmentColor, 0.12));
+      const tintColor = backgroundMode === "color" ? viewerSettings.environmentColor : "#ffffff";
+
+      ambientLightRef.current.color.copy(getTintedColor("#f7f1e4", tintColor, 0.12));
       ambientLightRef.current.intensity = viewerSettings.ambientIntensity;
     }
 
@@ -2764,19 +2825,25 @@ function BikeScene({
     }
 
     if (fillLightRef.current) {
-      fillLightRef.current.color.copy(getTintedColor("#f7f1e4", viewerSettings.environmentColor, 0.18));
+      const tintColor = backgroundMode === "color" ? viewerSettings.environmentColor : "#ffffff";
+
+      fillLightRef.current.color.copy(getTintedColor("#f7f1e4", tintColor, 0.18));
       fillLightRef.current.intensity = viewerSettings.fillIntensity;
     }
 
     if (rimLightRef.current) {
-      rimLightRef.current.color.copy(getTintedColor("#f1413c", viewerSettings.environmentColor, 0.25));
+      const tintColor = backgroundMode === "color" ? viewerSettings.environmentColor : "#ffffff";
+
+      rimLightRef.current.color.copy(getTintedColor("#f1413c", tintColor, 0.25));
       rimLightRef.current.intensity = viewerSettings.rimIntensity;
     }
 
     applyModelAmbientOcclusion(modelMaterialsRef.current, viewerSettings.modelAoIntensity);
 
     if (floorMaterialRef.current) {
-      floorMaterialRef.current.color.copy(getTintedColor("#2d2d2a", viewerSettings.environmentColor, 0.08));
+      const tintColor = backgroundMode === "color" ? viewerSettings.environmentColor : "#ffffff";
+
+      floorMaterialRef.current.color.copy(getTintedColor("#b9bfbd", tintColor, 0.34));
       floorMaterialRef.current.needsUpdate = true;
     }
 
@@ -2794,14 +2861,16 @@ function BikeScene({
     }
 
     if (stageRingHighlightMaterialRef.current) {
-      stageRingHighlightMaterialRef.current.color.copy(getTintedColor("#ffffff", viewerSettings.environmentColor, 0.72));
+      const tintColor = backgroundMode === "color" ? viewerSettings.environmentColor : "#ffffff";
+
+      stageRingHighlightMaterialRef.current.color.copy(getTintedColor("#ffffff", tintColor, 0.72));
     }
 
     if (cameraRef.current) {
       cameraRef.current.fov = viewerSettings.cameraFov;
       cameraRef.current.updateProjectionMatrix();
     }
-  }, [viewerSettings]);
+  }, [backgroundMode, viewerSettings]);
 
   useEffect(() => {
     const scene = sceneRef.current;
@@ -2834,7 +2903,10 @@ function BikeScene({
 
     const cameraTargets: Record<string, [THREE.Vector3, THREE.Vector3]> = {
       cockpit: [new THREE.Vector3(1.28, 1.8, 3.15), new THREE.Vector3(1.05, 1.48, 0)],
-      default: [new THREE.Vector3(startupCameraX, 1.12, startupCameraDistance), new THREE.Vector3(startupCameraX, 1.05, 0)],
+      default: [
+        new THREE.Vector3(startupCameraX, modelGroundY + startupCameraHeightOffset, startupCameraDistance),
+        new THREE.Vector3(startupCameraX, modelGroundY + startupLookHeightOffset, 0),
+      ],
       drivetrain: [new THREE.Vector3(-0.55, 0.74, 2.35), new THREE.Vector3(-0.38, 0.38, 0)],
       front: [new THREE.Vector3(1.28, 0.9, 2.65), new THREE.Vector3(1.36, 0.2, 0)],
       rear: [new THREE.Vector3(-1.35, 0.85, 2.55), new THREE.Vector3(-1.35, 0.18, 0)],
@@ -2865,8 +2937,26 @@ function BikeScene({
                 ? `${hotspot.label}: ${hotspot.description}`
                 : hotspot.label
             }
-            className={`viewer-hotspot ${hotspot.id}-hotspot`}
+            aria-expanded={hotspot.description ? activeHotspotId === hotspot.id : undefined}
+            className={`viewer-hotspot ${hotspot.id}-hotspot ${
+              activeHotspotId === hotspot.id ? "active" : ""
+            }`}
             key={hotspot.id}
+            onClick={() => {
+              if (!hotspot.description) {
+                return;
+              }
+
+              setActiveHotspotId((current) => current === hotspot.id ? null : hotspot.id);
+            }}
+            onKeyDown={(event) => {
+              if (!hotspot.description || (event.key !== "Enter" && event.key !== " ")) {
+                return;
+              }
+
+              event.preventDefault();
+              setActiveHotspotId((current) => current === hotspot.id ? null : hotspot.id);
+            }}
             ref={(element) => {
               if (element) {
                 hotspotElementsRef.current.set(hotspot.id, element);
@@ -2874,8 +2964,8 @@ function BikeScene({
                 hotspotElementsRef.current.delete(hotspot.id);
               }
             }}
+            role={hotspot.description ? "button" : undefined}
             tabIndex={hotspot.description ? 0 : -1}
-            title={hotspot.description}
           >
             <span className="viewer-hotspot-dot" />
             <span className="viewer-hotspot-label">{hotspot.label}</span>
@@ -2899,6 +2989,7 @@ export default function ConfiguratorClient() {
   const [status, setStatus] = useState("");
   const [hdriAsset, setHdriAsset] = useState<HdriAsset | null>(null);
   const [hasUploadedHdri, setHasUploadedHdri] = useState(false);
+  const [backgroundMode, setBackgroundMode] = useState<BackgroundMode>("color");
   const [showHotspots, setShowHotspots] = useState(false);
   const [introPhase, setIntroPhase] = useState<IntroPhase>("loading");
   const [loaderProgress, setLoaderProgress] = useState(0);
@@ -2934,7 +3025,7 @@ export default function ConfiguratorClient() {
       return undefined;
     }
 
-    const timer = window.setTimeout(() => setIntroPhase("cinematic"), 260);
+    const timer = window.setTimeout(() => setIntroPhase("cinematic"), 40);
 
     return () => window.clearTimeout(timer);
   }, [introPhase, loaderProgress, sceneReady]);
@@ -2998,7 +3089,6 @@ export default function ConfiguratorClient() {
       ]),
   ];
 
-  const configSeed = JSON.stringify(config);
   const buildComponentOrder = visibleComponentOrder;
 
   const buildCards = [
@@ -3065,10 +3155,19 @@ export default function ConfiguratorClient() {
   };
 
   const updateViewerColor = (environmentColor: string) => {
+    if (hdriObjectUrlRef.current) {
+      URL.revokeObjectURL(hdriObjectUrlRef.current);
+      hdriObjectUrlRef.current = null;
+    }
+
+    setBackgroundMode("color");
+    setHdriAsset(null);
+    setHasUploadedHdri(false);
     setViewerSettings((current) => ({
       ...current,
       environmentColor,
     }));
+    setStatus("");
   };
 
   const applyHdriPreset = (preset: HdriPreset) => {
@@ -3077,6 +3176,7 @@ export default function ConfiguratorClient() {
       hdriObjectUrlRef.current = null;
     }
 
+    setBackgroundMode("hdri");
     setHdriAsset({
       kind: preset.kind,
       name: preset.name,
@@ -3102,6 +3202,7 @@ export default function ConfiguratorClient() {
 
     setHdriAsset(null);
     setHasUploadedHdri(false);
+    setBackgroundMode("color");
     setStatus("HDRI disabled. Default studio background restored.");
   };
 
@@ -3117,6 +3218,7 @@ export default function ConfiguratorClient() {
       name: file.name,
       url,
     });
+    setBackgroundMode("hdri");
     setHasUploadedHdri(true);
     setStatus(`HDRI loaded: ${file.name}`);
   };
@@ -3186,22 +3288,17 @@ export default function ConfiguratorClient() {
     setActiveStep("components");
   };
 
-  const saveConfiguration = () => {
-    const encoded = window.btoa(configSeed);
-    window.localStorage.setItem("ribble-glamar-config", configSeed);
-    setStatus(`Saved configuration ${encoded.slice(0, 12)}.`);
-  };
-
-  const activeHdriPreset = !hasUploadedHdri && hdriAsset
+  const activeHdriPreset = backgroundMode === "hdri" && !hasUploadedHdri && hdriAsset
     ? hdriPresets.find((preset) => preset.url === hdriAsset.url)
     : null;
-  const isDefaultHdriActive = activeHdriPreset?.id === defaultHdriAsset.id;
-  const isHdriDisabled = !hdriAsset;
+  const isDefaultHdriActive = backgroundMode === "hdri" && activeHdriPreset?.id === defaultHdriAsset.id;
+  const isHdriDisabled = backgroundMode !== "hdri" || !hdriAsset;
 
   return (
     <main className={`configurator-shell intro-${introPhase}`} aria-busy={introPhase !== "ready"}>
       <section className="studio-area" aria-label="3D cycle preview">
         <BikeScene
+          backgroundMode={backgroundMode}
           config={config}
           focus={focus}
           hdriAsset={hdriAsset}
@@ -3227,8 +3324,10 @@ export default function ConfiguratorClient() {
         </div>
       </section>
 
-      <aside className="control-panel" aria-hidden={introPhase !== "ready"} aria-label="Ribble cycle configurator">
+      <aside className="control-panel" aria-hidden={introPhase === "loading"} aria-label="Ribble cycle configurator">
         <header className="panel-header">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img className="panel-brand-logo" src={publicAsset("ribble-logo-source.png")} alt="Ribble" width={105} height={22} />
           <span>{modelName}</span>
         </header>
 
@@ -3238,28 +3337,28 @@ export default function ConfiguratorClient() {
             onClick={() => setStage("build")}
             type="button"
           >
-            1. Build
+            Build
           </button>
           <button
             className={activeStage === "style" ? "active" : ""}
             onClick={() => setStage("style")}
             type="button"
           >
-            2. Style
+            Style
           </button>
           <button
             className={activeStage === "review" ? "active" : ""}
             onClick={() => setStage("review")}
             type="button"
           >
-            3. Review
+            Review
           </button>
           <button
             className={activeStage === "studio" ? "active" : ""}
             onClick={() => setStage("studio")}
             type="button"
           >
-            4. Studio
+            Studio
           </button>
         </nav>
 
@@ -3322,10 +3421,6 @@ export default function ConfiguratorClient() {
                   </button>
                 ))}
               </div>
-              <div className="detail-strip">
-                <span>Finish</span>
-                <strong>{paint.finish}</strong>
-              </div>
             </section>
           )}
 
@@ -3364,7 +3459,7 @@ export default function ConfiguratorClient() {
                 return (
                   <>
                     <button className="back-link" onClick={previousStep} type="button">
-                      Back to {group.label}
+                      Back
                     </button>
                     <div className="option-stack">
                       {group.options.map((option) => (
@@ -3462,10 +3557,6 @@ export default function ConfiguratorClient() {
                     })}
                   </div>
                 </div>
-                <StudioColorPalette
-                  onChange={updateViewerColor}
-                  value={viewerSettings.environmentColor}
-                />
                 <div className="studio-upload-control">
                   <span>
                     <em>HDRI File</em>
@@ -3533,6 +3624,11 @@ export default function ConfiguratorClient() {
 
               <div className="studio-group">
                 <p>Environment</p>
+                <StudioColorPalette
+                  active={backgroundMode === "color"}
+                  onChange={updateViewerColor}
+                  value={viewerSettings.environmentColor}
+                />
                 <StudioRange
                   label="Exposure"
                   max={2.4}
@@ -3688,27 +3784,14 @@ export default function ConfiguratorClient() {
             </button>
           </div>
         </footer>
-        <div className="panel-actions">
-          <button onClick={saveConfiguration} type="button">
-            Save Build
-          </button>
-          <button onClick={() => setStatus("Share payload ready.")} type="button">
-            Share
-          </button>
-        </div>
         {status && <p className="status-line">{status}</p>}
       </aside>
 
       {introPhase === "loading" ? (
-        <div className="experience-loader" role="status" aria-live="polite">
+        <div className="experience-loader" role="status" aria-label="Loading Fynd GlamAR configurator">
           <div className="loader-mark">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src={publicAsset("fynd-glamar-logo.svg")} alt="Fynd GlamAR" width={214} height={36} />
-          </div>
-          <div className="loader-ring" aria-hidden="true" />
-          <div className="loader-copy">
-            <span>Loading configurator</span>
-            <strong>{loaderProgress}%</strong>
           </div>
           <div className="loader-track" aria-hidden="true">
             <span style={{ width: `${loaderProgress}%` }} />
