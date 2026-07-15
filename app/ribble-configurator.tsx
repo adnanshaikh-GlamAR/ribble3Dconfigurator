@@ -221,7 +221,13 @@ const seatAdjustmentMorphValues: Record<string, number> = {
 };
 
 const viewerHotspots: ViewerHotspot[] = [
-  { anchor: [0.5, 0.79, 0.58], id: "body-frame", label: "Body Frame" },
+  {
+    anchor: [0.5, 0.79, 0.58],
+    description:
+      "A GOOD FIT MATTERS, most customers confidently order the right size using our simple sizing guide. Each bike comes with detailed specs, geometry, and measurements for every size.",
+    id: "body-frame",
+    label: "Body Frame",
+  },
   {
     anchor: [0.76, 0.84, 0.62],
     description:
@@ -237,7 +243,7 @@ const viewerHotspots: ViewerHotspot[] = [
     label: "Wheels",
   },
   {
-    anchor: [0.22, 0.93, 0.58],
+    anchor: [0.36, 0.94, 0.58],
     description:
       "A newly designed proprietary carbon aero seatpost introduces controlled vertical movement to absorb road vibration and reduce fatigue over long rides.",
     id: "saddle",
@@ -644,6 +650,10 @@ const componentAddonAssets: Partial<Record<ComponentKey, Partial<Record<string, 
 };
 const startupCameraDistance = 4.85;
 const startupCameraX = 1.02;
+const mobileStartupCameraX = 0;
+const mobileCameraBreakpoint = 900;
+const arVisualizationUrl =
+  "https://cdn.glamar.io/sdk/ar?skuId=0010991&accessKey=6ea59e6d-7599-4a8a-8450-d775500b6536";
 const startupCameraHeightOffset = 0.48;
 const startupLookHeightOffset = 0.02;
 // Authored GLB wheel-contact height. Keep the studio floor fixed and move assets to this line.
@@ -652,6 +662,12 @@ const modelGroundY = -0.82;
 const studioFloorClearance = 0.012;
 const studioFloorY = modelGroundY - studioFloorClearance;
 const modelRenderOrder = 10;
+
+function getStartupCameraX(viewportWidth?: number) {
+  return typeof viewportWidth === "number" && viewportWidth <= mobileCameraBreakpoint
+    ? mobileStartupCameraX
+    : startupCameraX;
+}
 
 const defaultConfig: ConfigState = {
   paint: "iridescent-white-metallic",
@@ -1310,7 +1326,7 @@ function prepareModelForViewport(model: THREE.Object3D, anisotropy = 1) {
   });
 }
 
-function prepareViewportModel(model: THREE.Object3D, anisotropy = 1) {
+function prepareViewportModel(model: THREE.Object3D, anisotropy = 1, cameraX = startupCameraX) {
   prepareModelForViewport(model, anisotropy);
 
   const bounds = new THREE.Box3().setFromObject(model);
@@ -1326,9 +1342,9 @@ function prepareViewportModel(model: THREE.Object3D, anisotropy = 1) {
   group.scale.setScalar(scale);
   group.position.y = modelGroundY - (bikeSourceGroundY - center.y) * scale;
 
-  const look = new THREE.Vector3(startupCameraX, group.position.y + startupLookHeightOffset, 0);
+  const look = new THREE.Vector3(cameraX, group.position.y + startupLookHeightOffset, 0);
   const camera = new THREE.Vector3(
-    startupCameraX,
+    cameraX,
     group.position.y + startupCameraHeightOffset,
     startupCameraDistance,
   );
@@ -2074,6 +2090,7 @@ function BikeScene({
   const stageRingMaterialRef = useRef<THREE.MeshBasicMaterial | null>(null);
   const stageRingHighlightMaterialRef = useRef<THREE.MeshBasicMaterial | null>(null);
   const assetCameraRef = useRef<{ camera: THREE.Vector3; look: THREE.Vector3 } | null>(null);
+  const viewportWidthRef = useRef(0);
   const modelLoadedRef = useRef(false);
   const fallbackRef = useRef(false);
   const targetCameraRef = useRef(
@@ -2153,9 +2170,19 @@ function BikeScene({
     );
     sceneRef.current = scene;
 
+    const initialCameraX = getStartupCameraX(container.clientWidth || window.innerWidth);
+    viewportWidthRef.current = container.clientWidth || window.innerWidth;
+    targetCameraRef.current.set(
+      initialCameraX,
+      modelGroundY + startupCameraHeightOffset,
+      startupCameraDistance,
+    );
+    targetLookRef.current.set(initialCameraX, modelGroundY + startupLookHeightOffset, 0);
+    lookRef.current.set(initialCameraX, modelGroundY + startupLookHeightOffset, 0);
+
     const initialSettings = viewerSettingsRef.current;
     const camera = new THREE.PerspectiveCamera(initialSettings.cameraFov, 1, 0.1, 100);
-    camera.position.set(startupCameraX, modelGroundY + startupCameraHeightOffset, startupCameraDistance);
+    camera.position.set(initialCameraX, modelGroundY + startupCameraHeightOffset, startupCameraDistance);
     cameraRef.current = camera;
 
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
@@ -2428,6 +2455,7 @@ function BikeScene({
         const { camera: assetCamera, group, look, sourceCenter } = prepareViewportModel(
           gltf.scene,
           anisotropyRef.current,
+          getStartupCameraX(container.clientWidth || window.innerWidth),
         );
         modelLoadedRef.current = true;
         fallbackRef.current = false;
@@ -2478,6 +2506,7 @@ function BikeScene({
 
     const resize = () => {
       const { clientWidth, clientHeight } = container;
+      viewportWidthRef.current = clientWidth;
       renderer.setSize(clientWidth, clientHeight);
       camera.fov = clientWidth < 560 ? Math.max(viewerSettingsRef.current.cameraFov, 40) : viewerSettingsRef.current.cameraFov;
       camera.aspect = clientWidth / Math.max(clientHeight, 1);
@@ -2900,11 +2929,18 @@ function BikeScene({
       return;
     }
 
+    const responsiveStartupCameraX = getStartupCameraX(
+      viewportWidthRef.current || (typeof window !== "undefined" ? window.innerWidth : undefined),
+    );
     const cameraTargets: Record<string, [THREE.Vector3, THREE.Vector3]> = {
       cockpit: [new THREE.Vector3(1.28, 1.8, 3.15), new THREE.Vector3(1.05, 1.48, 0)],
       default: [
-        new THREE.Vector3(startupCameraX, modelGroundY + startupCameraHeightOffset, startupCameraDistance),
-        new THREE.Vector3(startupCameraX, modelGroundY + startupLookHeightOffset, 0),
+        new THREE.Vector3(
+          responsiveStartupCameraX,
+          modelGroundY + startupCameraHeightOffset,
+          startupCameraDistance,
+        ),
+        new THREE.Vector3(responsiveStartupCameraX, modelGroundY + startupLookHeightOffset, 0),
       ],
       drivetrain: [new THREE.Vector3(-0.55, 0.74, 2.35), new THREE.Vector3(-0.38, 0.38, 0)],
       front: [new THREE.Vector3(1.28, 0.9, 2.65), new THREE.Vector3(1.36, 0.2, 0)],
@@ -2989,6 +3025,7 @@ export default function ConfiguratorClient() {
   const [hdriAsset, setHdriAsset] = useState<HdriAsset | null>(null);
   const [backgroundMode, setBackgroundMode] = useState<BackgroundMode>("color");
   const [showHotspots, setShowHotspots] = useState(false);
+  const [isArModalOpen, setIsArModalOpen] = useState(false);
   const [introPhase, setIntroPhase] = useState<IntroPhase>("loading");
   const [loaderProgress, setLoaderProgress] = useState(0);
   const [sceneReady, setSceneReady] = useState(false);
@@ -3225,6 +3262,15 @@ export default function ConfiguratorClient() {
     setActiveStep("components");
   };
 
+  const openArExperience = () => {
+    if (typeof window !== "undefined" && window.innerWidth <= mobileCameraBreakpoint) {
+      window.location.assign(arVisualizationUrl);
+      return;
+    }
+
+    setIsArModalOpen(true);
+  };
+
   const activeHdriPreset = backgroundMode === "hdri" && hdriAsset
     ? hdriPresets.find((preset) => preset.url === hdriAsset.url)
     : null;
@@ -3252,11 +3298,45 @@ export default function ConfiguratorClient() {
           </div>
         </header>
 
-        <div className="help-card" aria-hidden={introPhase !== "ready"}>
-          <span className="help-icon" />
-          <strong>Need Help?</strong>
-          <small>Chat with an expert</small>
-        </div>
+        {introPhase === "ready" && (
+          <button
+            aria-haspopup="dialog"
+            aria-label="Open AR barcode"
+            className="ar-launch-button"
+            onClick={openArExperience}
+            type="button"
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img alt="" aria-hidden="true" className="ar-launch-icon" src={publicAsset("ar/ar-icon.jpg")} />
+          </button>
+        )}
+
+        {isArModalOpen && (
+          <div className="ar-modal-backdrop">
+            <div aria-label="AR barcode" aria-modal="true" className="ar-modal" role="dialog">
+              <button
+                aria-label="Close AR barcode"
+                className="ar-modal-close"
+                onClick={() => setIsArModalOpen(false)}
+                type="button"
+              >
+                Close
+              </button>
+              <small>AR View</small>
+              <strong>Scan to view in AR</strong>
+              {/* Static GitHub Pages build cannot use next/image here. */}
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                alt="QR code to open the AR viewer"
+                className="ar-qr-code"
+                height={160}
+                src={publicAsset("ar/qr-code-4.png")}
+                width={160}
+              />
+              <p>Point your phone camera at this code to launch the cycle in AR.</p>
+            </div>
+          </div>
+        )}
       </section>
 
       <aside className="control-panel" aria-hidden={introPhase === "loading"} aria-label="Ribble cycle configurator">
@@ -3361,6 +3441,9 @@ export default function ConfiguratorClient() {
 
           {activeStep === "size" && (
             <section className="step-content" aria-label="Size selection">
+              <button className="back-link" onClick={previousStep} type="button">
+                Back
+              </button>
               <div className="section-title">
                 <p>Frame</p>
                 <strong>{getSizeLabel(config.size)}</strong>
