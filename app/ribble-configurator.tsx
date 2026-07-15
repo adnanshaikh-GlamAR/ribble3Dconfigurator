@@ -145,8 +145,10 @@ type HdriDomeMaterial = THREE.ShaderMaterial & {
 type ModelAssetId =
   | "baseFrame"
   | "bottle01"
+  | "bottleCage"
   | "duraAce105Di2"
   | "keoClassic3"
+  | "sramRedAxsE1"
   | "vittoriaRubino32Mm"
   | "mavicCosmicSl45"
   | "zipp303SwCarbon";
@@ -157,6 +159,8 @@ type ModelAsset = {
   preload?: boolean;
   sourceGroundY?: number;
 };
+
+type ComponentAddonAssetEntry = ModelAsset | ModelAsset[];
 
 type NumericViewerSettingKey = {
   [Key in keyof ViewerSettings]: ViewerSettings[Key] extends number ? Key : never;
@@ -217,16 +221,16 @@ const seatAdjustmentMorphValues: Record<string, number> = {
 };
 
 const viewerHotspots: ViewerHotspot[] = [
-  { anchor: [0.5, 0.58, 0.58], id: "body-frame", label: "Body Frame" },
+  { anchor: [0.5, 0.79, 0.58], id: "body-frame", label: "Body Frame" },
   {
-    anchor: [0.82, 0.8, 0.62],
+    anchor: [0.76, 0.84, 0.62],
     description:
       "Crafted from high-grade carbon, the Ribble integrated bar and stem pairs aerodynamic efficiency with a clean, refined aesthetic.",
     id: "handle",
     label: "Handle",
   },
   {
-    anchor: [0.82, 0.26, 0.6],
+    anchor: [0.96, 0.56, 0.6],
     description:
       "Carbon wheels deliver real-world speed, control and versatility across smooth roads and rougher surfaces alike.",
     id: "wheels",
@@ -240,14 +244,14 @@ const viewerHotspots: ViewerHotspot[] = [
     label: "Saddle",
   },
   {
-    anchor: [0.43, 0.25, 0.66],
+    anchor: [0.49, 0.18, 0.66],
     description:
       "The pinnacle of Shimano road technology, delivers lightning-fast wireless shifting that redefines what electronic performance feels like at every pace.",
     id: "groupset",
     label: "Groupset",
   },
   {
-    anchor: [0.55, 0.42, 0.64],
+    anchor: [0.47, 0.58, 0.64],
     description:
       "ULTRA-ROAD features a dedicated internal downtube storage compartment, built to keep your essentials such as spares, nutrition, tools accessible mid-ride without saddlebags.",
     id: "bottle-cage",
@@ -263,7 +267,7 @@ const defaultViewerSettings: ViewerSettings = {
   environmentColor: "#ddd9d3",
   environmentContrast: 1.08,
   environmentIntensity: 1.06,
-  environmentRotation: 22,
+  environmentRotation: -40,
   exposure: 0.61,
   fillIntensity: 1.9,
   floorGlow: 0.75,
@@ -560,7 +564,6 @@ const hdriPresets: HdriPreset[] = [
     url: publicAsset("hdri/studio_small_08_2k.hdr"),
   },
 ];
-const defaultHdriAsset = hdriPresets[0];
 const backgroundColorPresets = [
   { color: defaultViewerSettings.environmentColor, id: "default", label: "Default" },
   { color: "#000000", id: "black", label: "Black" },
@@ -571,19 +574,6 @@ const bodyFrameDiffuseMaps: Partial<Record<string, string>> = {
   "damson-metallic": "textures/skins/damson-metallic.jpg",
   "slate-grey-metallic": "textures/skins/slate-grey-metallic.jpg",
 };
-function getHdriAssetKind(fileName: string): HdriAssetKind {
-  const extension = fileName.split(".").pop()?.toLowerCase();
-
-  if (extension === "hdr") {
-    return "hdr";
-  }
-
-  if (extension === "exr") {
-    return "exr";
-  }
-
-  return "image";
-}
 const modelAssets = {
   baseFrame: {
     id: "baseFrame",
@@ -594,9 +584,19 @@ const modelAssets = {
     path: "models/storage/bottle-01.glb",
     preload: true,
   },
+  bottleCage: {
+    id: "bottleCage",
+    path: "models/storage/bottle-cage.glb",
+    preload: true,
+  },
   duraAce105Di2: {
     id: "duraAce105Di2",
     path: "models/groupset/dura-ace-105-di2.glb",
+    preload: true,
+  },
+  sramRedAxsE1: {
+    id: "sramRedAxsE1",
+    path: "models/groupset/sram-red-axs-e1.glb",
     preload: true,
   },
   keoClassic3: {
@@ -624,15 +624,17 @@ const modelAssets = {
   },
 } satisfies Record<ModelAssetId, ModelAsset>;
 const bikeModelUrl = publicAsset(modelAssets.baseFrame.path);
-const componentAddonAssets: Partial<Record<ComponentKey, Partial<Record<string, ModelAsset>>>> = {
+const componentAddonAssets: Partial<Record<ComponentKey, Partial<Record<string, ComponentAddonAssetEntry>>>> = {
   groupset: {
     "shimano-105-di2": modelAssets.duraAce105Di2,
+    "sram-force-axs": modelAssets.sramRedAxsE1,
   },
   pedals: {
     "keo-classic-3": modelAssets.keoClassic3,
   },
   storage: {
-    "water-bottle-500ml": modelAssets.bottle01,
+    "bottle-cage": modelAssets.bottleCage,
+    "water-bottle-500ml": [modelAssets.bottleCage, modelAssets.bottle01],
   },
   wheel: {
     "level-db40": modelAssets.vittoriaRubino32Mm,
@@ -1363,14 +1365,24 @@ function getModelCacheKey(asset: ModelAsset, sourceCenter: THREE.Vector3) {
   return `${asset.id}:${centerKey}`;
 }
 
+function getAddonAssetList(entry: ComponentAddonAssetEntry | undefined) {
+  if (!entry) {
+    return [];
+  }
+
+  return Array.isArray(entry) ? entry : [entry];
+}
+
 function getPreloadAddonAssets() {
   const assets = new Map<ModelAssetId, ModelAsset>();
 
   Object.values(componentAddonAssets).forEach((componentAssets) => {
-    Object.values(componentAssets ?? {}).forEach((asset) => {
-      if (asset.preload) {
-        assets.set(asset.id, asset);
-      }
+    Object.values(componentAssets ?? {}).forEach((entry) => {
+      getAddonAssetList(entry).forEach((asset) => {
+        if (asset.preload) {
+          assets.set(asset.id, asset);
+        }
+      });
     });
   });
 
@@ -1951,27 +1963,6 @@ function StudioRange({
   );
 }
 
-function StudioToggle({
-  checked,
-  label,
-  onChange,
-}: {
-  checked: boolean;
-  label: string;
-  onChange: (value: boolean) => void;
-}) {
-  return (
-    <label className="studio-toggle">
-      <span>{label}</span>
-      <input
-        checked={checked}
-        onChange={(event) => onChange(event.currentTarget.checked)}
-        type="checkbox"
-      />
-    </label>
-  );
-}
-
 function StudioColorPalette({
   active,
   onChange,
@@ -2376,17 +2367,19 @@ function BikeScene({
     };
 
     const syncAddonModel = (componentKey: ComponentKey, optionId: string) => {
-      const asset = componentAddonAssets[componentKey]?.[optionId];
+      const assets = getAddonAssetList(componentAddonAssets[componentKey]?.[optionId]);
       const requestId = (addonRequestCountersRef.current.get(componentKey) ?? 0) + 1;
       addonRequestCountersRef.current.set(componentKey, requestId);
       removeAddonModel(componentKey);
 
-      if (!asset || !bikeRef.current || !assetSourceCenterRef.current) {
+      if (assets.length === 0 || !bikeRef.current || !assetSourceCenterRef.current) {
         return;
       }
 
-      loadCachedAddonModel(asset, assetSourceCenterRef.current.clone())
-        .then((addon) => {
+      const sourceCenter = assetSourceCenterRef.current.clone();
+
+      Promise.all(assets.map((asset) => loadCachedAddonModel(asset, sourceCenter.clone())))
+        .then((addons) => {
           if (
             cancelled ||
             requestId !== addonRequestCountersRef.current.get(componentKey) ||
@@ -2396,8 +2389,11 @@ function BikeScene({
             return;
           }
 
-          activeAddonRefs.current.set(componentKey, addon);
-          bikeRef.current.add(addon);
+          const addonGroup = new THREE.Group();
+          addonGroup.name = `addon-${componentKey}-${optionId}`;
+          addons.forEach((addon) => addonGroup.add(addon));
+          activeAddonRefs.current.set(componentKey, addonGroup);
+          bikeRef.current.add(addonGroup);
           refreshModelMaterials();
           refreshHotspotBounds();
         })
@@ -2490,6 +2486,8 @@ function BikeScene({
     };
 
     window.addEventListener("resize", resize);
+    const resizeObserver = typeof ResizeObserver !== "undefined" ? new ResizeObserver(resize) : null;
+    resizeObserver?.observe(container);
     resize();
 
     const clock = new THREE.Clock();
@@ -2581,6 +2579,7 @@ function BikeScene({
       }
       cancelAnimationFrame(frame);
       window.removeEventListener("resize", resize);
+      resizeObserver?.disconnect();
       detachActiveAddonModels();
       if (bikeRef.current) {
         disposeObject(bikeRef.current);
@@ -2988,13 +2987,11 @@ export default function ConfiguratorClient() {
   const [editingGroup, setEditingGroup] = useState<ComponentKey | null>(null);
   const [status, setStatus] = useState("");
   const [hdriAsset, setHdriAsset] = useState<HdriAsset | null>(null);
-  const [hasUploadedHdri, setHasUploadedHdri] = useState(false);
   const [backgroundMode, setBackgroundMode] = useState<BackgroundMode>("color");
   const [showHotspots, setShowHotspots] = useState(false);
   const [introPhase, setIntroPhase] = useState<IntroPhase>("loading");
   const [loaderProgress, setLoaderProgress] = useState(0);
   const [sceneReady, setSceneReady] = useState(false);
-  const hdriObjectUrlRef = useRef<string | null>(null);
   const [viewerSettings, setViewerSettings] = useState<ViewerSettings>(defaultViewerSettings);
 
   useEffect(() => {
@@ -3029,14 +3026,6 @@ export default function ConfiguratorClient() {
 
     return () => window.clearTimeout(timer);
   }, [introPhase, loaderProgress, sceneReady]);
-
-  useEffect(() => {
-    return () => {
-      if (hdriObjectUrlRef.current) {
-        URL.revokeObjectURL(hdriObjectUrlRef.current);
-      }
-    };
-  }, []);
 
   const paint = getPaint(config.paint);
   const total = useMemo(() => {
@@ -3140,13 +3129,6 @@ export default function ConfiguratorClient() {
     }));
   };
 
-  const updateViewerBoolean = (key: keyof Pick<ViewerSettings, "shadows">, value: boolean) => {
-    setViewerSettings((current) => ({
-      ...current,
-      [key]: value,
-    }));
-  };
-
   const updateToneMapping = (toneMapping: ToneMappingKey) => {
     setViewerSettings((current) => ({
       ...current,
@@ -3155,14 +3137,8 @@ export default function ConfiguratorClient() {
   };
 
   const updateViewerColor = (environmentColor: string) => {
-    if (hdriObjectUrlRef.current) {
-      URL.revokeObjectURL(hdriObjectUrlRef.current);
-      hdriObjectUrlRef.current = null;
-    }
-
     setBackgroundMode("color");
     setHdriAsset(null);
-    setHasUploadedHdri(false);
     setViewerSettings((current) => ({
       ...current,
       environmentColor,
@@ -3171,56 +3147,17 @@ export default function ConfiguratorClient() {
   };
 
   const applyHdriPreset = (preset: HdriPreset) => {
-    if (hdriObjectUrlRef.current) {
-      URL.revokeObjectURL(hdriObjectUrlRef.current);
-      hdriObjectUrlRef.current = null;
-    }
-
     setBackgroundMode("hdri");
     setHdriAsset({
       kind: preset.kind,
       name: preset.name,
       url: preset.url,
     });
-    setHasUploadedHdri(false);
     setViewerSettings((current) => ({
       ...current,
       ...preset.settings,
     }));
     setStatus("");
-  };
-
-  const restoreDefaultHdriAsset = () => {
-    applyHdriPreset(hdriPresets[0]);
-  };
-
-  const disableHdriAsset = () => {
-    if (hdriObjectUrlRef.current) {
-      URL.revokeObjectURL(hdriObjectUrlRef.current);
-      hdriObjectUrlRef.current = null;
-    }
-
-    setHdriAsset(null);
-    setHasUploadedHdri(false);
-    setBackgroundMode("color");
-    setStatus("HDRI disabled. Default studio background restored.");
-  };
-
-  const uploadHdriAsset = (file: File) => {
-    if (hdriObjectUrlRef.current) {
-      URL.revokeObjectURL(hdriObjectUrlRef.current);
-    }
-
-    const url = URL.createObjectURL(file);
-    hdriObjectUrlRef.current = url;
-    setHdriAsset({
-      kind: getHdriAssetKind(file.name),
-      name: file.name,
-      url,
-    });
-    setBackgroundMode("hdri");
-    setHasUploadedHdri(true);
-    setStatus(`HDRI loaded: ${file.name}`);
   };
 
   const nextStep = () => {
@@ -3288,11 +3225,9 @@ export default function ConfiguratorClient() {
     setActiveStep("components");
   };
 
-  const activeHdriPreset = backgroundMode === "hdri" && !hasUploadedHdri && hdriAsset
+  const activeHdriPreset = backgroundMode === "hdri" && hdriAsset
     ? hdriPresets.find((preset) => preset.url === hdriAsset.url)
     : null;
-  const isDefaultHdriActive = backgroundMode === "hdri" && activeHdriPreset?.id === defaultHdriAsset.id;
-  const isHdriDisabled = backgroundMode !== "hdri" || !hdriAsset;
 
   return (
     <main className={`configurator-shell intro-${introPhase}`} aria-busy={introPhase !== "ready"}>
@@ -3505,7 +3440,16 @@ export default function ConfiguratorClient() {
             <section className="studio-settings" aria-label="Studio environment settings">
               <div className="section-title">
                 <p>Studio</p>
-                <strong>Render Setup</strong>
+                <div className="section-title-actions">
+                  <strong>Render Setup</strong>
+                  <button
+                    className="studio-reset"
+                    onClick={() => setViewerSettings(defaultViewerSettings)}
+                    type="button"
+                  >
+                    Reset
+                  </button>
+                </div>
               </div>
 
               <div className="studio-select-row">
@@ -3522,13 +3466,6 @@ export default function ConfiguratorClient() {
                     ))}
                   </select>
                 </label>
-                <button
-                  className="studio-reset"
-                  onClick={() => setViewerSettings(defaultViewerSettings)}
-                  type="button"
-                >
-                  Reset
-                </button>
               </div>
 
               <div className="studio-group">
@@ -3555,43 +3492,6 @@ export default function ConfiguratorClient() {
                         </button>
                       );
                     })}
-                  </div>
-                </div>
-                <div className="studio-upload-control">
-                  <span>
-                    <em>HDRI File</em>
-                    <strong>{hdriAsset?.name ?? "None"}</strong>
-                  </span>
-                  <div className="studio-upload-actions">
-                    <label>
-                      Upload HDRI
-                      <input
-                        accept=".hdr,.exr,image/jpeg,image/png,image/webp"
-                        onChange={(event) => {
-                          const file = event.currentTarget.files?.[0];
-
-                          if (file) {
-                            uploadHdriAsset(file);
-                            event.currentTarget.value = "";
-                          }
-                        }}
-                        type="file"
-                      />
-                    </label>
-                    <button
-                      disabled={isDefaultHdriActive}
-                      onClick={restoreDefaultHdriAsset}
-                      type="button"
-                    >
-                      Restore Default
-                    </button>
-                    <button
-                      disabled={isHdriDisabled}
-                      onClick={disableHdriAsset}
-                      type="button"
-                    >
-                      None
-                    </button>
                   </div>
                 </div>
                 <StudioRange
@@ -3662,106 +3562,8 @@ export default function ConfiguratorClient() {
                   step={0.01}
                   value={viewerSettings.environmentContrast}
                 />
-                <StudioRange
-                  label="Ambient Light"
-                  max={4}
-                  min={0}
-                  onChange={(value) => updateViewerNumber("ambientIntensity", value)}
-                  step={0.01}
-                  value={viewerSettings.ambientIntensity}
-                />
               </div>
 
-              <div className="studio-group">
-                <p>Lighting</p>
-                <StudioRange
-                  label="Key Intensity"
-                  max={12}
-                  min={0}
-                  onChange={(value) => updateViewerNumber("keyIntensity", value)}
-                  step={0.05}
-                  value={viewerSettings.keyIntensity}
-                />
-                <StudioRange
-                  label="Fill Intensity"
-                  max={18}
-                  min={0}
-                  onChange={(value) => updateViewerNumber("fillIntensity", value)}
-                  step={0.05}
-                  value={viewerSettings.fillIntensity}
-                />
-                <StudioRange
-                  label="Rim Intensity"
-                  max={6}
-                  min={0}
-                  onChange={(value) => updateViewerNumber("rimIntensity", value)}
-                  step={0.05}
-                  value={viewerSettings.rimIntensity}
-                />
-              </div>
-
-              <div className="studio-group">
-                <p>Shadows & AO</p>
-                <StudioToggle
-                  checked={viewerSettings.shadows}
-                  label="Shadow"
-                  onChange={(value) => updateViewerBoolean("shadows", value)}
-                />
-                <StudioRange
-                  label="VSM Blur Samples"
-                  max={24}
-                  min={0}
-                  onChange={(value) => updateViewerNumber("vsmBlurSamples", value)}
-                  step={1}
-                  value={viewerSettings.vsmBlurSamples}
-                />
-                <StudioRange
-                  label="Model AO"
-                  max={2}
-                  min={0}
-                  onChange={(value) => updateViewerNumber("modelAoIntensity", value)}
-                  step={0.01}
-                  value={viewerSettings.modelAoIntensity}
-                />
-              </div>
-
-              <div className="studio-group">
-                <p>Composition</p>
-                <StudioRange
-                  label="Camera FOV"
-                  max={55}
-                  min={20}
-                  onChange={(value) => updateViewerNumber("cameraFov", value)}
-                  step={1}
-                  suffix=" deg"
-                  value={viewerSettings.cameraFov}
-                />
-                <StudioRange
-                  label="Pixel Ratio"
-                  max={3}
-                  min={0.75}
-                  onChange={(value) => updateViewerNumber("pixelRatio", value)}
-                  step={0.25}
-                  suffix="x"
-                  value={viewerSettings.pixelRatio}
-                />
-                <StudioRange
-                  label="Floor Glow Fade"
-                  max={1}
-                  min={0}
-                  onChange={(value) => updateViewerNumber("floorGlow", value)}
-                  step={0.01}
-                  value={viewerSettings.floorGlow}
-                />
-                <StudioRange
-                  label="Backdrop Glow"
-                  max={1.6}
-                  min={0}
-                  onChange={(value) => updateViewerNumber("backdropGlow", value)}
-                  step={0.01}
-                  value={viewerSettings.backdropGlow}
-                />
-              </div>
             </section>
           )}
         </div>

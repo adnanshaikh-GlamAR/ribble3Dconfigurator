@@ -24,6 +24,7 @@
 
 html {
   background: var(--background);
+  min-height: 100%;
 }
 
 body {
@@ -36,6 +37,8 @@ body {
     Helvetica,
     sans-serif;
   margin: 0;
+  min-height: 100%;
+  overflow: hidden;
 }
 
 button {
@@ -163,6 +166,7 @@ button {
   outline: none;
   position: absolute;
   inset: 0;
+  touch-action: none;
   width: 100%;
   z-index: 1;
 }
@@ -498,7 +502,7 @@ button {
 .panel-header span {
   color: #fff;
   font-size: 14px;
-  font-weight: 700;
+  font-weight: 500;
 }
 
 .stage-tabs {
@@ -539,9 +543,12 @@ button {
 }
 
 .panel-body {
+  -webkit-overflow-scrolling: touch;
   min-height: 0;
+  overscroll-behavior: contain;
   overflow: auto;
   padding: 0 18px 14px;
+  scrollbar-width: thin;
 }
 
 .build-list,
@@ -769,6 +776,12 @@ button {
   font-size: 14px;
 }
 
+.section-title-actions {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+}
+
 .detail-strip,
 .summary-row {
   align-items: center;
@@ -842,7 +855,7 @@ button {
 .studio-select-row {
   display: grid;
   gap: 10px;
-  grid-template-columns: minmax(0, 1fr) 76px;
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .studio-select-row label,
@@ -888,10 +901,12 @@ button {
 .studio-reset {
   background: rgba(255, 255, 255, 0.86);
   border: 1px solid rgba(16, 24, 33, 0.14);
-  border-radius: 8px;
+  border-radius: 999px;
   color: var(--ink);
   cursor: pointer;
   font-size: 12px;
+  min-height: 28px;
+  padding: 0 12px;
 }
 
 .studio-reset:hover,
@@ -1243,35 +1258,37 @@ button {
   padding: 0 18px 14px;
 }
 
-@media (max-width: 1180px) {
+@media (max-width: 1180px) and (min-width: 901px) {
   .configurator-shell {
-    --viewport-gutter: 22px;
+    --panel-width: min(390px, calc(100vw - 40px));
+    --viewport-gutter: 20px;
     height: 100svh;
     min-height: 100svh;
     overflow: hidden;
   }
 
-  .studio-area {
-    height: 100%;
-    min-height: 0;
-  }
-
   .control-panel {
-    border-radius: 18px 18px 0 0;
-    bottom: 0;
-    height: min(46svh, 520px);
-    left: 0;
-    margin: 0;
-    min-height: 0;
-    right: 0;
-    top: auto;
-    width: auto;
+    border-radius: 16px;
+    bottom: 20px;
+    right: var(--viewport-gutter);
+    top: 20px;
   }
 
   .help-card {
     display: none;
   }
 
+  .panel-header {
+    min-height: 56px;
+  }
+
+  .stage-tabs {
+    margin: 14px 14px 10px;
+  }
+
+  .panel-body {
+    padding: 0 14px 12px;
+  }
 }
 
 @media (max-height: 760px) and (min-width: 1181px) {
@@ -1280,53 +1297,417 @@ button {
   }
 }
 
-@media (max-width: 680px) {
+@media (max-width: 900px) {
+  .configurator-shell {
+    --mobile-panel-bottom: env(safe-area-inset-bottom, 0px);
+    --mobile-panel-height: min(48dvh, 410px);
+    height: 100dvh;
+    min-height: 100dvh;
+    overflow: hidden;
+  }
+
   .studio-area {
     height: 100%;
     min-height: 0;
   }
 
+  .bike-stage {
+    bottom: calc(var(--mobile-panel-height) + var(--mobile-panel-bottom));
+    height: auto;
+  }
+
   .brand-block {
-    left: 18px;
+    left: 20px;
     top: 20px;
   }
 
   .brand-wordmark {
-    margin-bottom: 18px;
+    margin-bottom: 0;
   }
 
   .glamar-wordmark img {
-    height: 26px;
+    height: 28px;
   }
 
-  .hotspot-toggle {
-    font-size: 11px;
-    min-height: 40px;
-    padding: 8px 11px 8px 9px;
+  .help-card {
+    display: none;
   }
 
-  .panel-body {
-    padding: 0 14px 14px;
+  .control-panel {
+    border-radius: 18px 18px 0 0;
+    bottom: 0;
+    height: calc(var(--mobile-panel-height) + var(--mobile-panel-bottom));
+    left: 0;
+    margin: 0;
+    min-height: 0;
+    padding-bottom: var(--mobile-panel-bottom);
+    right: 0;
+    top: auto;
+    width: auto;
+  }
+
+  .panel-header {
+    min-height: 52px;
+    padding: 0 16px;
+  }
+
+  .panel-brand-logo {
+    height: 18px;
+  }
+
+  .panel-header span {
+    font-size: 12px;
   }
 
   .stage-tabs {
-    margin: 14px;
+    margin: 12px 12px 10px;
+    padding: 5px;
+  }
+
+  .stage-tabs::before {
+    bottom: 5px;
+    left: 5px;
+    top: 5px;
+    width: calc((100% - 10px) / 4);
+  }
+
+  .stage-tabs button {
+    font-size: 12px;
+    min-height: 38px;
+  }
+
+  .panel-body {
+    padding: 0 12px 12px;
+  }
+
+  .build-list,
+  .step-content,
+  .component-list,
+  .summary-list,
+  .option-stack,
+  .studio-settings {
+    gap: 8px;
   }
 
   .build-card {
-    grid-template-columns: 50px minmax(0, 1fr) 14px;
+    gap: 10px;
+    grid-template-columns: 46px minmax(0, 1fr) 14px;
+    min-height: 60px;
+    padding: 8px 10px;
   }
 
   .build-card em {
     display: none;
   }
 
+  .build-card strong,
+  .component-row strong,
+  .option-row strong,
+  .paint-card strong {
+    font-size: 13px;
+  }
+
+  .build-card small,
+  .component-row small,
+  .option-row small,
+  .paint-card small {
+    font-size: 12px;
+  }
+
+  .part-thumb {
+    height: 42px;
+    width: 42px;
+  }
+
+  .part-icon-svg {
+    height: 28px;
+    stroke-width: 1.9;
+    width: 28px;
+  }
+
+  .hotspot-toggle {
+    font-size: 11px;
+    min-height: 38px;
+    padding: 8px 10px;
+  }
+
+  .option-row {
+    gap: 10px;
+    grid-template-columns: 42px minmax(0, 1fr) auto;
+    min-height: 58px;
+    padding: 8px 10px;
+  }
+
+  .option-thumb {
+    height: 36px;
+    width: 38px;
+  }
+
+  .option-thumb .part-icon-svg {
+    height: 26px;
+    width: 26px;
+  }
+
+  .size-grid button {
+    min-height: 54px;
+    padding: 10px 12px;
+  }
+
+  .paint-swatch {
+    height: 38px;
+  }
+
+  .section-title {
+    margin: 4px 0 6px;
+  }
+
+  .studio-select-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .studio-group,
+  .studio-select-row label {
+    padding: 10px;
+  }
+
+  .studio-control,
+  .studio-color-control,
+  .studio-hdri-presets,
+  .studio-upload-control {
+    padding: 9px;
+  }
+
+  .studio-hdri-preset span {
+    height: 34px;
+    width: 34px;
+  }
+
+  .studio-background-preset {
+    min-height: 58px;
+  }
+
+  .studio-background-preset span {
+    height: 24px;
+    width: 24px;
+  }
+
+  .studio-upload-actions {
+    grid-template-columns: minmax(0, 1fr) 74px 48px;
+  }
+
+  .studio-upload-actions label,
+  .studio-upload-actions button {
+    font-size: 11px;
+    min-height: 34px;
+    padding: 0 8px;
+  }
+
   .panel-footer {
-    grid-template-columns: 1fr;
-    padding: 16px 14px 14px;
+    gap: 10px;
+    grid-template-columns: minmax(0, 1fr) 104px;
+    padding: 12px;
+  }
+
+  .price-block {
+    gap: 4px;
+  }
+
+  .price-block span {
+    font-size: 10px;
+  }
+
+  .price-block strong {
+    font-size: 20px;
+  }
+
+  .price-block small {
+    font-size: 11px;
   }
 
   .primary-action {
-    min-height: 52px;
+    min-height: 40px;
+  }
+
+  .status-line {
+    display: none;
+  }
+}
+
+@media (max-width: 680px) {
+  .configurator-shell {
+    --mobile-panel-height: min(52dvh, 420px);
+  }
+
+  .brand-block {
+    left: 16px;
+    top: 16px;
+  }
+
+  .glamar-wordmark img {
+    height: 24px;
+  }
+
+  .viewer-hotspot {
+    gap: 6px;
+  }
+
+  .viewer-hotspot-dot {
+    height: 10px;
+    width: 10px;
+  }
+
+  .viewer-hotspot-label {
+    font-size: 10px;
+    padding: 6px 8px;
+  }
+
+  .viewer-hotspot-card {
+    font-size: 10px;
+    max-width: min(230px, calc(100vw - 32px));
+    padding: 10px;
+  }
+
+  .panel-header {
+    min-height: 48px;
+    padding: 0 14px;
+  }
+
+  .panel-brand-logo {
+    height: 16px;
+  }
+
+  .panel-header span {
+    font-size: 11px;
+  }
+
+  .stage-tabs {
+    margin: 10px;
+    padding: 4px;
+  }
+
+  .stage-tabs::before {
+    bottom: 4px;
+    left: 4px;
+    top: 4px;
+    width: calc((100% - 8px) / 4);
+  }
+
+  .stage-tabs button {
+    font-size: 11px;
+    min-height: 34px;
+  }
+
+  .build-card {
+    grid-template-columns: 42px minmax(0, 1fr) 12px;
+    min-height: 56px;
+  }
+
+  .part-thumb {
+    height: 38px;
+    width: 38px;
+  }
+
+  .part-icon-svg {
+    height: 24px;
+    width: 24px;
+  }
+
+  .panel-footer {
+    grid-template-columns: minmax(0, 1fr) 96px;
+    padding: 10px;
+  }
+
+  .primary-action {
+    min-height: 38px;
+  }
+
+  .studio-upload-actions {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 420px) {
+  .configurator-shell {
+    --mobile-panel-height: 54dvh;
+  }
+
+  .control-panel {
+    border-radius: 16px 16px 0 0;
+  }
+
+  .panel-header span {
+    max-width: 128px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .stage-tabs button {
+    font-size: 10px;
+    min-height: 32px;
+  }
+
+  .panel-body {
+    padding: 0 10px 10px;
+  }
+
+  .panel-footer {
+    grid-template-columns: minmax(0, 1fr) 92px;
+  }
+
+  .price-block strong {
+    font-size: 19px;
+  }
+
+  .option-row {
+    grid-template-columns: 38px minmax(0, 1fr) auto;
+  }
+
+  .option-row em {
+    font-size: 10px;
+  }
+}
+
+@media (max-width: 900px) and (max-height: 520px) {
+  .configurator-shell {
+    --landscape-panel-width: min(360px, 44vw);
+  }
+
+  .bike-stage {
+    bottom: 0;
+    right: calc(var(--landscape-panel-width) + 12px);
+    width: auto;
+  }
+
+  .control-panel {
+    border-radius: 14px;
+    bottom: 10px;
+    height: auto;
+    left: auto;
+    padding-bottom: 0;
+    right: 10px;
+    top: 10px;
+    width: var(--landscape-panel-width);
+  }
+
+  .brand-block {
+    left: 14px;
+    top: 14px;
+  }
+
+  .glamar-wordmark img {
+    height: 22px;
+  }
+
+  .panel-header {
+    min-height: 42px;
+  }
+
+  .stage-tabs {
+    margin: 8px;
+  }
+
+  .panel-footer {
+    padding: 9px 10px;
   }
 }
