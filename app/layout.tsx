@@ -1,8 +1,9 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import { appendAssetVersion } from "./asset-version";
 
 const siteUrl = "https://adnanshaikh-glamar.github.io/ribble3Dconfigurator";
-const socialPreviewImage = `${siteUrl}/social/ribble-configurator-preview.png`;
+const socialPreviewImage = appendAssetVersion(`${siteUrl}/social/ribble-configurator-preview.png`);
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
